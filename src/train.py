@@ -9,7 +9,7 @@ from cnn.dataset import parse_image_dataset, SpectrogramImageDataset
 from cnn.model import DualStreamVisionNet
 
 # --- Computer Vision Project Configurations ---
-IMAGE_DATASET_DIR = '../visual_embeddings'
+IMAGE_DATASET_DIR = './visual_embeddings'
 DANCE_CLASSES = ['ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
 TEST_SET_PERCENTAGE = 0.15  # 15% completely held out for final inference testing
 K_FOLDS = 5  # 5-fold cross validation on the remaining 85% images
