@@ -42,6 +42,8 @@ def main():
     # 3. K-Fold Cross Validation on the visual training set
     kf = KFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
 
+    best_overall_val_acc = 0.0
+
     for fold, (train_idx, val_idx) in enumerate(kf.split(scenes_train_val)):
         print(f"\n--- Starting Vision Fold {fold + 1}/{K_FOLDS} ---")
 
@@ -63,6 +65,9 @@ def main():
         vision_model = DualStreamVisionNet(num_classes=len(DANCE_CLASSES)).to(DEVICE)
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.AdamW(vision_model.parameters(), lr=1e-4, weight_decay=1e-2)
+
+        best_fold_val_acc = 0.0
+        best_fold_state = None
 
         # Training Loop over image batches
         for epoch in range(EPOCHS):
@@ -110,7 +115,19 @@ def main():
             print(
                 f"Fold {fold + 1} | Epoch {epoch + 1}/{EPOCHS} | Train Loss: {train_loss / total_images:.4f} Acc: {train_accuracy:.2f}% | Val Loss: {val_loss / val_total:.4f} Acc: {val_accuracy:.2f}%")
 
-        # torch.save(vision_model.state_dict(), f"vision_model_fold_{fold+1}.pt")
+            # Save best epoch within this fold
+            if val_accuracy > best_fold_val_acc:
+                best_fold_val_acc = val_accuracy
+                best_fold_state = {k: v.cpu().clone() for k, v in vision_model.state_dict().items()}
+                print(f"  ✓ New best for fold {fold + 1}: {val_accuracy:.2f}%")
+
+        # Save best model across all folds
+        if best_fold_val_acc > best_overall_val_acc:
+            best_overall_val_acc = best_fold_val_acc
+            torch.save(best_fold_state, "best_vision_model.pt")
+            print(f"  ★ New overall best saved (fold {fold + 1}, val acc {best_overall_val_acc:.2f}%)")
+
+    print(f"\nTraining complete. Best overall val accuracy: {best_overall_val_acc:.2f}% → best_vision_model.pt")
 
 
 if __name__ == '__main__':
