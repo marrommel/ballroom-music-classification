@@ -57,13 +57,18 @@ class DualStreamVisionNet(nn.Module):
         visual_feature_dim = _feat_dim * 2
 
         # Custom Multi-Layer Perceptron (MLP) head for visual feature fusion
+        # self.classification_head = nn.Sequential(
+        #    nn.Dropout(p=dropout_rate),
+        #    nn.Linear(visual_feature_dim, 512),
+        #    nn.BatchNorm1d(512),  # Stabilizes spatial feature distributions
+        #    nn.GELU(),  # Non-linear activation for complex visual patterns
+        #    nn.Dropout(p=dropout_rate / 1.5),
+        #    nn.Linear(512, num_classes)
+        # )
+
         self.classification_head = nn.Sequential(
             nn.Dropout(p=dropout_rate),
-            nn.Linear(visual_feature_dim, 512),
-            nn.BatchNorm1d(512),  # Stabilizes spatial feature distributions
-            nn.GELU(),  # Non-linear activation for complex visual patterns
-            nn.Dropout(p=dropout_rate / 2),
-            nn.Linear(512, num_classes)
+            nn.Linear(visual_feature_dim, num_classes)
         )
 
     def forward(self, image_view1, image_view2):

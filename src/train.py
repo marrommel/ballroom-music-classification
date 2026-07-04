@@ -14,7 +14,10 @@ DANCE_CLASSES = ['ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWa
 TEST_SET_PERCENTAGE = 0.15  # 15% completely held out for final inference testing
 K_FOLDS = 5  # 5-fold cross validation on the remaining 85% images
 BATCH_SIZE = 32
-EPOCHS = 20
+EPOCHS = 50  # Upper bound; early stopping usually halts sooner
+LR_PATIENCE = 4       # Epochs without val improvement before reducing LR
+LR_FACTOR = 0.5       # Multiply LR by this on plateau
+EARLY_STOP_PATIENCE = 8  # Epochs without val improvement before stopping (> LR_PATIENCE so LR drops first)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -66,8 +69,15 @@ def main():
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.AdamW(vision_model.parameters(), lr=1e-4, weight_decay=1e-2)
 
+        # Reduce LR when val accuracy plateaus (fires before early stopping)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='max', factor=LR_FACTOR, patience=LR_PATIENCE
+        )
+
         best_fold_val_acc = 0.0
         best_fold_state = None
+        best_fold_epoch = 0
+        epochs_without_improvement = 0
 
         # Training Loop over image batches
         for epoch in range(EPOCHS):
@@ -115,11 +125,30 @@ def main():
             print(
                 f"Fold {fold + 1} | Epoch {epoch + 1}/{EPOCHS} | Train Loss: {train_loss / total_images:.4f} Acc: {train_accuracy:.2f}% | Val Loss: {val_loss / val_total:.4f} Acc: {val_accuracy:.2f}%")
 
+            # LR scheduler step (reduce LR on plateau)
+            lr_before = optimizer.param_groups[0]['lr']
+            scheduler.step(val_accuracy)
+            lr_after = optimizer.param_groups[0]['lr']
+            if lr_after < lr_before:
+                print(f"  ↓ LR reduced on plateau: {lr_before:.2e} → {lr_after:.2e}")
+
             # Save best epoch within this fold
             if val_accuracy > best_fold_val_acc:
                 best_fold_val_acc = val_accuracy
                 best_fold_state = {k: v.cpu().clone() for k, v in vision_model.state_dict().items()}
+                best_fold_epoch = epoch + 1
+                epochs_without_improvement = 0
                 print(f"  ✓ New best for fold {fold + 1}: {val_accuracy:.2f}%")
+            else:
+                epochs_without_improvement += 1
+
+            # Early stopping on sustained plateau (only after LR reduction had a chance)
+            if epochs_without_improvement >= EARLY_STOP_PATIENCE:
+                print(
+                    f"  ⏹ Early stopping at epoch {epoch + 1}: no improvement for "
+                    f"{EARLY_STOP_PATIENCE} epochs. Best epoch was {best_fold_epoch} "
+                    f"(val acc {best_fold_val_acc:.2f}%).")
+                break
 
         # Save best model across all folds
         if best_fold_val_acc > best_overall_val_acc:
