@@ -45,9 +45,10 @@ def _min_max_normalize(array: np.ndarray) -> np.ndarray:
 
 
 def generate_spectrograms(audio_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load an audio file and generate mel and CQT spectrograms from the first 30 seconds.
+    """Load an audio file and generate mel and CQT spectrograms from a 30-second middle chunk.
 
     Replicates the preprocessing pipeline used during training (min-max normalisation).
+    Only the required chunk is decoded, avoiding loading the full file into memory.
 
     Args:
         audio_path: Path to the input audio file (.wav, .mp3, etc.).
@@ -58,22 +59,22 @@ def generate_spectrograms(audio_path: str) -> tuple[np.ndarray, np.ndarray]:
     Raises:
         ValueError: If the audio is shorter than ``CHUNK_DURATION`` seconds.
     """
-    y, _ = librosa.load(audio_path, sr=SAMPLE_RATE)
-
-    samples_needed = CHUNK_DURATION * SAMPLE_RATE
-    if len(y) < samples_needed:
+    total_duration = librosa.get_duration(path=audio_path)
+    if total_duration < CHUNK_DURATION:
         raise ValueError(
-            f"Audio is too short: {len(y) / SAMPLE_RATE:.1f}s, need at least {CHUNK_DURATION}s."
+            f"Audio is too short: {total_duration:.1f}s, need at least {CHUNK_DURATION}s."
         )
-    y_chunk = y[:samples_needed]
+
+    offset = min(total_duration / 2, total_duration - CHUNK_DURATION)
+    y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, offset=offset, duration=CHUNK_DURATION)
 
     # Mel spectrogram
-    mel = librosa.feature.melspectrogram(y=y_chunk, sr=SAMPLE_RATE, n_mels=128, hop_length=512)
+    mel = librosa.feature.melspectrogram(y=y, sr=SAMPLE_RATE, n_mels=128, hop_length=512)
     mel_db = librosa.power_to_db(mel, ref=np.max)
     mel_normalized = _min_max_normalize(mel_db).astype(np.float32)
 
     # CQT
-    cqt = librosa.cqt(y=y_chunk, sr=SAMPLE_RATE, hop_length=512, n_bins=84)
+    cqt = librosa.cqt(y=y, sr=SAMPLE_RATE, hop_length=512, n_bins=84)
     cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
     cqt_normalized = _min_max_normalize(cqt_db).astype(np.float32)
 
