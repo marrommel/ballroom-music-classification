@@ -8,7 +8,6 @@ from cnn.model import DualStreamVisionNet
 
 DANCE_CLASSES = ['ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-CHECKPOINT_PATH = "src/best_vision_model.pt"
 SAMPLE_RATE = 22050
 CHUNK_DURATION = 30  # seconds
 
