@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
 from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
@@ -43,7 +43,7 @@ def main():
         f"Total Unique Scenes: {len(unique_scenes)} | Train+Val Scenes: {len(scenes_train_val)} | Test Scenes: {len(scenes_test)}")
 
     # 3. K-Fold Cross Validation on the visual training set
-    kf = KFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
+    kf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
 
     best_overall_val_acc = 0.0
 
