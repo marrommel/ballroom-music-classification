@@ -72,6 +72,8 @@ Thumbs.db
 
 # Project-specific
 audio/
+visual_embeddings_backup/
 
 # Pretrained weights files
 *.safetensors
+*.pt

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import timm
 from safetensors.torch import load_file
+from timm.layers import drop_path
 
 
 def _load_grayscale_backbone(checkpoint_path: str) -> nn.Module:
@@ -26,7 +27,8 @@ def _load_grayscale_backbone(checkpoint_path: str) -> nn.Module:
         state_dict["conv_stem.weight"] = state_dict["conv_stem.weight"].mean(dim=1, keepdim=True)
 
     model = timm.create_model(
-        'mobilenetv4_conv_large.e600_r384_in1k',
+        #'mobilenetv4_conv_large.e600_r384_in1k',
+        'mobilenetv4_conv_small.e2400_r224_in1k',
         pretrained=False,
         in_chans=1,
         num_classes=0,
@@ -39,7 +41,8 @@ class DualStreamVisionNet(nn.Module):
     def __init__(self, num_classes=7, dropout_rate=0.4):
         super().__init__()
 
-        pretrained_weights = r"src/model.safetensors"
+        #pretrained_weights = r"src/mobilenetv4_conv_large_e600_r384_in1k.safetensors"
+        pretrained_weights = r"src/mobilenetv4_conv_small_e2400_r224_in1k.safetensors"
 
         # Using timm to load a State-of-the-Art Vision model (MobileNetV4 Large).
         # in_chans=1 configures the first Conv2D layer for 1-channel Grayscale images.
@@ -57,18 +60,13 @@ class DualStreamVisionNet(nn.Module):
         visual_feature_dim = _feat_dim * 2
 
         # Custom Multi-Layer Perceptron (MLP) head for visual feature fusion
-        # self.classification_head = nn.Sequential(
-        #    nn.Dropout(p=dropout_rate),
-        #    nn.Linear(visual_feature_dim, 512),
-        #    nn.BatchNorm1d(512),  # Stabilizes spatial feature distributions
-        #    nn.GELU(),  # Non-linear activation for complex visual patterns
-        #    nn.Dropout(p=dropout_rate / 1.5),
-        #    nn.Linear(512, num_classes)
-        # )
-
         self.classification_head = nn.Sequential(
             nn.Dropout(p=dropout_rate),
-            nn.Linear(visual_feature_dim, num_classes)
+            nn.Linear(visual_feature_dim, 512),
+            nn.BatchNorm1d(512),  # Stabilizes spatial feature distributions
+            nn.GELU(),  # Non-linear activation for complex visual patterns
+            nn.Dropout(p=dropout_rate / 1.5),
+            nn.Linear(512, num_classes)
         )
 
     def forward(self, image_view1, image_view2):
