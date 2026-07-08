@@ -6,17 +6,18 @@ import torch
 
 from cnn.model import DualStreamVisionNet
 
-DANCE_CLASSES = ['ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
+DANCE_CLASSES = ['DiscoFox', 'ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+CHECKPOINT_PATH = "best_vision_model.pt"
 SAMPLE_RATE = 22050
-CHUNK_DURATION = 30  # seconds
+CHUNK_DURATION = 15  # seconds
 
 
 def load_model(checkpoint_path: str) -> DualStreamVisionNet:
     """Load a trained DualStreamVisionNet from a checkpoint file.
 
     Args:
-        checkpoint_path: Path to the ``best_vision_model.pt`` state-dict file.
+        checkpoint_path: Path to the trained state-dict file.
 
     Returns:
         The model in eval mode, ready for inference.

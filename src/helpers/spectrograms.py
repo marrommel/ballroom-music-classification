@@ -44,15 +44,20 @@ def save_spectrograms(
 
     # Calculate how many samples make up our chunk
     samples_per_chunk = int(chunk_duration * sr)
-    total_chunks = len(y) // samples_per_chunk
+    hop_samples = samples_per_chunk // 2  # 50% overlap sliding window
+    total_chunks = max(0, (len(y) - samples_per_chunk) // hop_samples + 1)
 
     song_name = os.path.splitext(os.path.basename(audio_path))[0]
 
     vis_mel_path, vis_cqt_path = "", ""
 
     for i in range(total_chunks):
-        # 1. Slice the audio into a 3-second chunk
-        start_sample = i * samples_per_chunk
+        # skip end and beginning of full YouTube songs
+        if "YouTube" in audio_path and (i == 0 or i == total_chunks - 1):
+            continue
+
+        # 1. Slice the audio into a chunk with 50% hop
+        start_sample = i * hop_samples
         end_sample = start_sample + samples_per_chunk
         y_chunk = y[start_sample:end_sample]
 

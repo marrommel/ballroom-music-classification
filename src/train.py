@@ -9,16 +9,18 @@ from cnn.dataset import parse_image_dataset, SpectrogramImageDataset
 from cnn.model import DualStreamVisionNet
 
 # --- Computer Vision Project Configurations ---
-IMAGE_DATASET_DIR = './visual_embeddings'
-DANCE_CLASSES = ['ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
-TEST_SET_PERCENTAGE = 0.15  # 15% completely held out for final inference testing
-K_FOLDS = 5  # 5-fold cross validation on the remaining 85% images
-BATCH_SIZE = 32
-EPOCHS = 50  # Upper bound; early stopping usually halts sooner
-LR_PATIENCE = 4       # Epochs without val improvement before reducing LR
-LR_FACTOR = 0.5       # Multiply LR by this on plateau
-EARLY_STOP_PATIENCE = 8  # Epochs without val improvement before stopping (> LR_PATIENCE so LR drops first)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+IMAGE_DATASET_DIR = './visual_embeddings'
+DANCE_CLASSES = ['DiscoFox', 'ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
+
+TEST_SET_PERCENTAGE = 0.0 
+K_FOLDS = 5
+BATCH_SIZE = 32
+
+EPOCHS = 50
+LR_PATIENCE = 3
+LR_FACTOR = 0.75
+EARLY_STOP_PATIENCE = 10
 
 
 def main():
@@ -32,22 +34,23 @@ def main():
     scene_labels = [scene_groups[scene][0]['label'] for scene in unique_scenes]
 
     # 2. Configurable Train/Test Split (Holding out the Test set by parent scene ID)
-    scenes_train_val, scenes_test = train_test_split(
-        unique_scenes,
-        test_size=TEST_SET_PERCENTAGE,
-        random_state=42,
-        stratify=scene_labels
-    )
-
-    print(
-        f"Total Unique Scenes: {len(unique_scenes)} | Train+Val Scenes: {len(scenes_train_val)} | Test Scenes: {len(scenes_test)}")
+    if TEST_SET_PERCENTAGE > 0:
+        scenes_train_val, _ = train_test_split(
+            unique_scenes,
+            test_size=TEST_SET_PERCENTAGE,
+            random_state=42,
+            stratify=scene_labels
+        )
+    else:
+        scenes_train_val = unique_scenes
+    print(f"Total Unique Scenes: {len(unique_scenes)}")
 
     # 3. K-Fold Cross Validation on the visual training set
-    kf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
 
     best_overall_val_acc = 0.0
 
-    for fold, (train_idx, val_idx) in enumerate(kf.split(scenes_train_val)):
+    for fold, (train_idx, val_idx) in enumerate(skf.split(scenes_train_val, scene_labels)):
         print(f"\n--- Starting Vision Fold {fold + 1}/{K_FOLDS} ---")
 
         # Map indices back to parent scene IDs
@@ -59,14 +62,15 @@ def main():
         val_image_patches = [patch for scene in fold_val_scenes for patch in scene_groups[scene]]
 
         # Create PyTorch DataLoaders for the Vision models
-        train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, IMAGE_DATASET_DIR),
+        train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, IMAGE_DATASET_DIR, train=False),
                                   batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-        val_loader = DataLoader(SpectrogramImageDataset(val_image_patches, IMAGE_DATASET_DIR),
+        val_loader = DataLoader(SpectrogramImageDataset(val_image_patches, IMAGE_DATASET_DIR, train=False),
                                 batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
         # Initialize CNN Model, Loss Function, and Optimizer
         vision_model = DualStreamVisionNet(num_classes=len(DANCE_CLASSES)).to(DEVICE)
-        criterion = nn.CrossEntropyLoss()
+        # TODO: added label_smoothing to reduce the problem of Ballroom classes being genuinely confusable
+        criterion = nn.CrossEntropyLoss() #label_smoothing=0.1
         optimizer = optim.AdamW(vision_model.parameters(), lr=1e-4, weight_decay=1e-2)
 
         # Reduce LR when val accuracy plateaus (fires before early stopping)

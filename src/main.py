@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 
-from src.helpers.spectrograms import save_spectrograms
+from helpers.spectrograms import save_spectrograms
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,7 +12,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # configuration
-DATA_DIR = "../data"
+DATA_DIR = "data"
 OUTPUT_ROOT = "visual_embeddings"
 CHUNK_DURATION = 15
 AUDIO_EXTENSIONS = (".mp3", ".wav")

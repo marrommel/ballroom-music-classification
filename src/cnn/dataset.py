@@ -6,12 +6,25 @@ from torch.utils.data import Dataset
 
 
 class SpectrogramImageDataset(Dataset):
-    def __init__(self, image_patch_list, base_dir):
-        """
-        image_patch_list: List of dictionaries containing image paths and labels for this specific fold
-        """
+    def __init__(self, image_patch_list, base_dir, train: bool = False):
         self.image_patch_list = image_patch_list
         self.base_dir = base_dir
+        self.train = train
+
+    def _augment(self, spec: np.ndarray) -> np.ndarray:
+        """Apply SpecAugment-style masking. Operates on a normalized 2D spectrogram."""
+        H, W = spec.shape
+        # Frequency masking (up to 2 bands)
+        for _ in range(np.random.randint(0, 3)):
+            f = np.random.randint(0, max(1, H // 8))
+            f0 = np.random.randint(0, max(1, H - f))
+            spec[f0:f0 + f, :] = 0.0
+        # Time masking (up to 2 bands)
+        for _ in range(np.random.randint(0, 3)):
+            t = np.random.randint(0, max(1, W // 8))
+            t0 = np.random.randint(0, max(1, W - t))
+            spec[:, t0:t0 + t] = 0.0
+        return spec
 
     def __len__(self):
         return len(self.image_patch_list)
@@ -20,20 +33,27 @@ class SpectrogramImageDataset(Dataset):
         image_metadata = self.image_patch_list[idx]
 
         # Load 2D matrices (Grayscale Images)
-        img_array_v1 = np.load(image_metadata['view1_image_path'])  # Formerly Mel
-        img_array_v2 = np.load(image_metadata['view2_image_path'])  # Formerly CQT
+        img_array_mel = np.load(image_metadata['view1_image_path'])
+        img_array_cqt = np.load(image_metadata['view2_image_path'])
+
+        if self.train:
+            # Time-shift (roll) — dance rhythm is periodic, so wrap-around is valid
+            shift = np.random.randint(0, img_array_mel.shape[1])
+            img_array_mel = np.roll(img_array_mel, shift, axis=1)
+            img_array_cqt = np.roll(img_array_cqt, shift, axis=1)
+            #img_array_mel = self._augment(img_array_mel)
+            #img_array_cqt = self._augment(img_array_cqt)
 
         # Pixel Intensity Normalization (Z-score standardization for image contrast)
-        img_array_v1 = (img_array_v1 - np.mean(img_array_v1)) / (np.std(img_array_v1) + 1e-6)
-        img_array_v2 = (img_array_v2 - np.mean(img_array_v2)) / (np.std(img_array_v2) + 1e-6)
+        img_array_mel = (img_array_mel - np.mean(img_array_mel)) / (np.std(img_array_mel) + 1e-6)
+        img_array_cqt = (img_array_cqt - np.mean(img_array_cqt)) / (np.std(img_array_cqt) + 1e-6)
 
         # Convert to Vision Tensors and add a Channel dimension: (Channels=1, Height, Width)
-        img_tensor_v1 = torch.tensor(img_array_v1, dtype=torch.float32).unsqueeze(0)
-        img_tensor_v2 = torch.tensor(img_array_v2, dtype=torch.float32).unsqueeze(0)
+        img_tensor_v1 = torch.tensor(img_array_mel, dtype=torch.float32).unsqueeze(0)
+        img_tensor_v2 = torch.tensor(img_array_cqt, dtype=torch.float32).unsqueeze(0)
         label = torch.tensor(image_metadata['label'], dtype=torch.long)
 
         return img_tensor_v1, img_tensor_v2, label
-
 
 def parse_image_dataset(base_dir: str, visual_classes: list[str]) -> dict:
     """Parses the directory and groups image patches by their Parent Scene.

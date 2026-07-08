@@ -1,8 +1,7 @@
+import timm
 import torch
 import torch.nn as nn
-import timm
 from safetensors.torch import load_file
-from timm.layers import drop_path
 
 
 def _load_grayscale_backbone(checkpoint_path: str) -> nn.Module:
@@ -32,13 +31,14 @@ def _load_grayscale_backbone(checkpoint_path: str) -> nn.Module:
         pretrained=False,
         in_chans=1,
         num_classes=0,
+        drop_path_rate=0.3, # TODO: added stochastic depth, which is a strong regularizer
     )
     model.load_state_dict(state_dict, strict=False)
     return model
 
 
 class DualStreamVisionNet(nn.Module):
-    def __init__(self, num_classes=7, dropout_rate=0.4):
+    def __init__(self, num_classes=8, dropout_rate=0.4):
         super().__init__()
 
         #pretrained_weights = r"src/mobilenetv4_conv_large_e600_r384_in1k.safetensors"
@@ -47,32 +47,32 @@ class DualStreamVisionNet(nn.Module):
         # Using timm to load a State-of-the-Art Vision model (MobileNetV4 Large).
         # in_chans=1 configures the first Conv2D layer for 1-channel Grayscale images.
         # num_classes=0 removes the classification head, acting purely as a visual feature extractor.
-        self.vision_branch_v1 = _load_grayscale_backbone(pretrained_weights)
-        self.vision_branch_v2 = _load_grayscale_backbone(pretrained_weights)
+        self.mel_spectrograms_branch = _load_grayscale_backbone(pretrained_weights)
+        self.cqt_spectrograms_branch = _load_grayscale_backbone(pretrained_weights)
 
         # Infer the true feature dim with a dummy forward pass, since num_features
         # does not reliably reflect the pooled output size when num_classes=0.
         with torch.no_grad():
-            self.vision_branch_v1.eval()
+            self.mel_spectrograms_branch.eval()
             _dummy = torch.zeros(1, 1, 384, 384)
-            _feat_dim = self.vision_branch_v1(_dummy).shape[1]
-            self.vision_branch_v1.train()
+            _feat_dim = self.mel_spectrograms_branch(_dummy).shape[1]
+            self.mel_spectrograms_branch.train()
         visual_feature_dim = _feat_dim * 2
 
         # Custom Multi-Layer Perceptron (MLP) head for visual feature fusion
         self.classification_head = nn.Sequential(
-            nn.Dropout(p=dropout_rate),
-            nn.Linear(visual_feature_dim, 512),
-            nn.BatchNorm1d(512),  # Stabilizes spatial feature distributions
-            nn.GELU(),  # Non-linear activation for complex visual patterns
-            nn.Dropout(p=dropout_rate / 1.5),
-            nn.Linear(512, num_classes)
+           nn.Dropout(p=dropout_rate),
+           nn.Linear(visual_feature_dim, 512),
+           nn.BatchNorm1d(512),  # Stabilizes spatial feature distributions
+           nn.GELU(),
+           nn.Dropout(p=dropout_rate / 1.5),
+           nn.Linear(512, num_classes)
         )
 
     def forward(self, image_view1, image_view2):
         # Extract visual feature maps: Output Shape (Batch, Feature_Dim)
-        spatial_features_v1 = self.vision_branch_v1(image_view1)
-        spatial_features_v2 = self.vision_branch_v2(image_view2)
+        spatial_features_v1 = self.mel_spectrograms_branch(image_view1)
+        spatial_features_v2 = self.cqt_spectrograms_branch(image_view2)
 
         # Late Fusion: Concatenate the visual visual_embeddings from both image representations
         fused_visual_features = torch.cat((spatial_features_v1, spatial_features_v2), dim=1)

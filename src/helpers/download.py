@@ -38,7 +38,7 @@ def download_song(youtube_url, dance_type):
 
 if __name__ == "__main__":
     project_root = Path(__file__).parent.parent.parent
-    songs_file = project_root / "data" / "youtube_songs.csv"
+    songs_file = project_root / "data" / "youtube_songs.txt"
 
     with open(songs_file, 'r') as f:
         reader = csv.reader(f)
