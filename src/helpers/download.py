@@ -7,7 +7,7 @@ from yt_dlp.utils import ExtractorError, DownloadError
 def download_song(youtube_url, dance_type):
     """Downloads a YouTube video as a WAV audio file using yt-dlp."""
     project_root = Path(__file__).parent.parent.parent
-    output_dir = project_root / "data" / dance_type
+    output_dir = project_root / "train_data_set" / dance_type
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
@@ -32,13 +32,14 @@ def download_song(youtube_url, dance_type):
             info = ydl.extract_info(youtube_url, download=True)
             # Return the path to the downloaded WAV file
             return str(output_dir / f"{info['id']}.wav")
-    except (ExtractorError, DownloadError):
+    except (ExtractorError, DownloadError) as e:
         print("SKIPPING - Error during extraction occurred")
+        print(e)
 
 
 if __name__ == "__main__":
     project_root = Path(__file__).parent.parent.parent
-    songs_file = project_root / "data" / "youtube_songs.txt"
+    songs_file = project_root / "train_data_set" / "youtube_songs.txt"
 
     with open(songs_file, 'r') as f:
         reader = csv.reader(f)

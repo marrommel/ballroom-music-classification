@@ -1,77 +1,78 @@
 import numpy as np
-from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
+from sklearn.model_selection import train_test_split, StratifiedGroupKFold
 from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
 from cnn.dataset import parse_image_dataset, SpectrogramImageDataset
-from cnn.model import DualStreamVisionNet
+from cnn.model import DualSpectrogramClassificationModel
 
 # --- Computer Vision Project Configurations ---
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 IMAGE_DATASET_DIR = './visual_embeddings'
 DANCE_CLASSES = ['DiscoFox', 'ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
+# 'NoDance',
 
-TEST_SET_PERCENTAGE = 0.0 
+TEST_SET_PERCENTAGE = 0.0
 K_FOLDS = 5
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 
-EPOCHS = 50
+EPOCHS = 100
 LR_PATIENCE = 3
 LR_FACTOR = 0.75
-EARLY_STOP_PATIENCE = 10
+EARLY_STOP_PATIENCE = 15
+WARMUP_EPOCHS = 20
 
 
 def main():
     print(f"Initializing Vision Pipeline on device: {DEVICE}")
 
-    # 1. Parse image dataset and group by Parent Scene (to prevent spatial leakage)
+    # Parse image dataset and group by Parent Scene (to prevent spatial leakage)
     scene_groups = parse_image_dataset(IMAGE_DATASET_DIR, DANCE_CLASSES)
-    unique_scenes = list(scene_groups.keys())
 
-    # Extract labels per scene to maintain class balance during image splits
-    scene_labels = [scene_groups[scene][0]['label'] for scene in unique_scenes]
+    # Flatten the dictionary into one master list of all chunks
+    all_image_patches = []
+    for parent_scene_id, patches in scene_groups.items():
+        all_image_patches.extend(patches)
 
-    # 2. Configurable Train/Test Split (Holding out the Test set by parent scene ID)
-    if TEST_SET_PERCENTAGE > 0:
-        scenes_train_val, _ = train_test_split(
-            unique_scenes,
-            test_size=TEST_SET_PERCENTAGE,
-            random_state=42,
-            stratify=scene_labels
-        )
-    else:
-        scenes_train_val = unique_scenes
-    print(f"Total Unique Scenes: {len(unique_scenes)}")
+    # 3. Extract exactly what sklearn needs: X (dummy), y (labels), and groups (scene IDs)
+    X = np.zeros(len(all_image_patches))  # Dummy X, we only need the indices
+    y = [patch['label'] for patch in all_image_patches]
+    groups = [patch['parent_scene_id'] for patch in all_image_patches]
 
-    # 3. K-Fold Cross Validation on the visual training set
-    skf = StratifiedKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
+    print(f"Total Unique Scenes: {len(scene_groups)}")
+
+    # Stratified Group K-Fold Cross Validation on the visual training set
+    sgkf = StratifiedGroupKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
 
     best_overall_val_acc = 0.0
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(scenes_train_val, scene_labels)):
+    for fold, (train_idx, val_idx) in enumerate(sgkf.split(X, y, groups=groups)):
         print(f"\n--- Starting Vision Fold {fold + 1}/{K_FOLDS} ---")
 
         # Map indices back to parent scene IDs
-        fold_train_scenes = [scenes_train_val[i] for i in train_idx]
-        fold_val_scenes = [scenes_train_val[i] for i in val_idx]
-
-        # Flatten the image patches from the selected scenes into lists
-        train_image_patches = [patch for scene in fold_train_scenes for patch in scene_groups[scene]]
-        val_image_patches = [patch for scene in fold_val_scenes for patch in scene_groups[scene]]
+        train_image_patches = [all_image_patches[i] for i in train_idx]
+        val_image_patches = [all_image_patches[i] for i in val_idx]
 
         # Create PyTorch DataLoaders for the Vision models
-        train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, IMAGE_DATASET_DIR, train=False),
+        train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, IMAGE_DATASET_DIR, train=True),
                                   batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
         val_loader = DataLoader(SpectrogramImageDataset(val_image_patches, IMAGE_DATASET_DIR, train=False),
                                 batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
         # Initialize CNN Model, Loss Function, and Optimizer
-        vision_model = DualStreamVisionNet(num_classes=len(DANCE_CLASSES)).to(DEVICE)
+        model = DualSpectrogramClassificationModel(num_classes=len(DANCE_CLASSES)).to(DEVICE)
         # TODO: added label_smoothing to reduce the problem of Ballroom classes being genuinely confusable
         criterion = nn.CrossEntropyLoss() #label_smoothing=0.1
-        optimizer = optim.AdamW(vision_model.parameters(), lr=1e-4, weight_decay=1e-2)
+
+        optimizer = torch.optim.AdamW([
+            {'params': model.mel_spectrograms_branch.parameters(), 'lr': 1e-5},
+            {'params': model.cqt_spectrograms_branch.parameters(), 'lr': 1e-5},
+            {'params': model.reduce_mlp_features.parameters(), 'lr': 5e-3},
+            {'params': model.reduce_cqt_features.parameters(), 'lr': 5e-3},
+            {'params': model.classification_head.parameters(), 'lr': 5e-3},
+        ], weight_decay=1e-2)
 
         # Reduce LR when val accuracy plateaus (fires before early stopping)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -85,22 +86,26 @@ def main():
 
         # Training Loop over image batches
         for epoch in range(EPOCHS):
-            vision_model.train()
+            model.train()
             train_loss = 0.0
             correct_predictions = 0
             total_images = 0
 
-            for img_v1, img_v2, labels in train_loader:
+            for mel_img, cqt_img, labels in train_loader:
                 # Move image tensors to GPU
-                img_v1, img_v2, labels = img_v1.to(DEVICE), img_v2.to(DEVICE), labels.to(DEVICE)
+                mel_img, cqt_img, labels = mel_img.to(DEVICE), cqt_img.to(DEVICE), labels.to(DEVICE)
+
+                # Apply MixUp
+                #mel_img, cqt_img, targets_a, targets_b, lam = mixup_data(mel_img, cqt_img, labels, alpha=0.1)
 
                 optimizer.zero_grad()
-                logits = vision_model(img_v1, img_v2)
+                logits = model(mel_img, cqt_img)
+                #loss = mixup_criterion(criterion, logits, targets_a, targets_b, lam)
                 loss = criterion(logits, labels)
                 loss.backward()
                 optimizer.step()
 
-                train_loss += loss.item() * img_v1.size(0)
+                train_loss += loss.item() * mel_img.size(0)
                 _, predicted = logits.max(1)
                 total_images += labels.size(0)
                 correct_predictions += predicted.eq(labels).sum().item()
@@ -108,19 +113,19 @@ def main():
             train_accuracy = 100. * correct_predictions / total_images
 
             # Validation Step
-            vision_model.eval()
+            model.eval()
             val_loss = 0.0
             val_correct = 0
             val_total = 0
 
             with torch.no_grad():
-                for img_v1, img_v2, labels in val_loader:
-                    img_v1, img_v2, labels = img_v1.to(DEVICE), img_v2.to(DEVICE), labels.to(DEVICE)
+                for mel_img, cqt_img, labels in val_loader:
+                    mel_img, cqt_img, labels = mel_img.to(DEVICE), cqt_img.to(DEVICE), labels.to(DEVICE)
 
-                    logits = vision_model(img_v1, img_v2)
+                    logits = model(mel_img, cqt_img)
                     loss = criterion(logits, labels)
 
-                    val_loss += loss.item() * img_v1.size(0)
+                    val_loss += loss.item() * mel_img.size(0)
                     _, predicted = logits.max(1)
                     val_total += labels.size(0)
                     val_correct += predicted.eq(labels).sum().item()
@@ -139,7 +144,7 @@ def main():
             # Save best epoch within this fold
             if val_accuracy > best_fold_val_acc:
                 best_fold_val_acc = val_accuracy
-                best_fold_state = {k: v.cpu().clone() for k, v in vision_model.state_dict().items()}
+                best_fold_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 best_fold_epoch = epoch + 1
                 epochs_without_improvement = 0
                 print(f"  ✓ New best for fold {fold + 1}: {val_accuracy:.2f}%")
@@ -162,6 +167,21 @@ def main():
 
     print(f"\nTraining complete. Best overall val accuracy: {best_overall_val_acc:.2f}% → best_vision_model.pt")
 
+def mixup_data(x1, x2, y, alpha=0.2):
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size = x1.size()[0]
+    index = torch.randperm(batch_size).to(x1.device)
+
+    mixed_x1 = lam * x1 + (1 - lam) * x1[index, :]
+    mixed_x2 = lam * x2 + (1 - lam) * x2[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x1, mixed_x2, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 if __name__ == '__main__':
     main()

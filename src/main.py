@@ -12,9 +12,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # configuration
-DATA_DIR = "data"
+DATA_DIR = "train_data_set"
 OUTPUT_ROOT = "visual_embeddings"
-CHUNK_DURATION = 15
+CHUNK_DURATION = 5
 AUDIO_EXTENSIONS = (".mp3", ".wav")
 
 

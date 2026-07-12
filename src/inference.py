@@ -4,16 +4,17 @@ import librosa
 import numpy as np
 import torch
 
-from cnn.model import DualStreamVisionNet
+from cnn.model import DualSpectrogramClassificationModel
 
+# 'NoDance',
 DANCE_CLASSES = ['DiscoFox', 'ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 CHECKPOINT_PATH = "best_vision_model.pt"
 SAMPLE_RATE = 22050
-CHUNK_DURATION = 15  # seconds
+CHUNK_DURATION = 5  # seconds
 
 
-def load_model(checkpoint_path: str) -> DualStreamVisionNet:
+def load_model(checkpoint_path: str) -> DualSpectrogramClassificationModel:
     """Load a trained DualStreamVisionNet from a checkpoint file.
 
     Args:
@@ -22,7 +23,7 @@ def load_model(checkpoint_path: str) -> DualStreamVisionNet:
     Returns:
         The model in eval mode, ready for inference.
     """
-    model = DualStreamVisionNet(num_classes=len(DANCE_CLASSES)).to(DEVICE)
+    model = DualSpectrogramClassificationModel(num_classes=len(DANCE_CLASSES)).to(DEVICE)
     state_dict = torch.load(checkpoint_path, map_location=DEVICE, weights_only=True)
     model.load_state_dict(state_dict)
     model.eval()
@@ -94,7 +95,7 @@ def _to_tensor(array: np.ndarray) -> torch.Tensor:
     return torch.tensor(array).unsqueeze(0).unsqueeze(0).to(DEVICE)
 
 
-def predict(model: DualStreamVisionNet, mel: np.ndarray, cqt: np.ndarray) -> tuple[str, dict[str, float]]:
+def predict(model: DualSpectrogramClassificationModel, mel: np.ndarray, cqt: np.ndarray) -> tuple[str, dict[str, float]]:
     """Run inference on a (mel, cqt) spectrogram pair.
 
     Args:
