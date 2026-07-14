@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.model_selection import train_test_split, StratifiedGroupKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
@@ -10,50 +10,49 @@ from cnn.model import DualSpectrogramClassificationModel
 
 # --- Computer Vision Project Configurations ---
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-IMAGE_DATASET_DIR = './visual_embeddings'
+IMAGE_DATASET_DIR = './image_embeddings'
 DANCE_CLASSES = ['DiscoFox', 'ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
 # 'NoDance',
 
-TEST_SET_PERCENTAGE = 0.0
 K_FOLDS = 5
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 
 EPOCHS = 100
-LR_PATIENCE = 3
-LR_FACTOR = 0.75
-EARLY_STOP_PATIENCE = 15
-WARMUP_EPOCHS = 20
+LR_PATIENCE = 4
+LR_FACTOR = 0.5
+EARLY_STOP_PATIENCE = 20
 
 
 def main():
     print(f"Initializing Vision Pipeline on device: {DEVICE}")
 
     # Parse image dataset and group by Parent Scene (to prevent spatial leakage)
-    scene_groups = parse_image_dataset(IMAGE_DATASET_DIR, DANCE_CLASSES)
+    song_groups = parse_image_dataset(IMAGE_DATASET_DIR, DANCE_CLASSES)
 
     # Flatten the dictionary into one master list of all chunks
-    all_image_patches = []
-    for parent_scene_id, patches in scene_groups.items():
-        all_image_patches.extend(patches)
+    all_spectrogram_chunks = []
+    for parent_song, chunk in song_groups.items():
+        all_spectrogram_chunks.extend(chunk)
 
     # 3. Extract exactly what sklearn needs: X (dummy), y (labels), and groups (scene IDs)
-    X = np.zeros(len(all_image_patches))  # Dummy X, we only need the indices
-    y = [patch['label'] for patch in all_image_patches]
-    groups = [patch['parent_scene_id'] for patch in all_image_patches]
+    X = np.zeros(len(all_spectrogram_chunks))  # Dummy X, we only need the indices
+    y = [chunk['label'] for chunk in all_spectrogram_chunks]
+    groups = [chunk['parent_song'] for chunk in all_spectrogram_chunks]
 
-    print(f"Total Unique Scenes: {len(scene_groups)}")
+    print(f"Total Unique Scenes: {len(song_groups)}")
 
     # Stratified Group K-Fold Cross Validation on the visual training set
-    sgkf = StratifiedGroupKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
+    kfold = StratifiedGroupKFold(n_splits=K_FOLDS, shuffle=True, random_state=42)
 
     best_overall_val_acc = 0.0
 
-    for fold, (train_idx, val_idx) in enumerate(sgkf.split(X, y, groups=groups)):
-        print(f"\n--- Starting Vision Fold {fold + 1}/{K_FOLDS} ---")
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(X, y, groups=groups)):
+        if fold > 1: continue
+        print(f"\n--- Starting Fold {fold + 1}/{K_FOLDS} ---")
 
         # Map indices back to parent scene IDs
-        train_image_patches = [all_image_patches[i] for i in train_idx]
-        val_image_patches = [all_image_patches[i] for i in val_idx]
+        train_image_patches = [all_spectrogram_chunks[i] for i in train_idx]
+        val_image_patches = [all_spectrogram_chunks[i] for i in val_idx]
 
         # Create PyTorch DataLoaders for the Vision models
         train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, IMAGE_DATASET_DIR, train=True),
@@ -67,14 +66,13 @@ def main():
         criterion = nn.CrossEntropyLoss() #label_smoothing=0.1
 
         optimizer = torch.optim.AdamW([
-            {'params': model.mel_spectrograms_branch.parameters(), 'lr': 1e-5},
-            {'params': model.cqt_spectrograms_branch.parameters(), 'lr': 1e-5},
-            {'params': model.reduce_mlp_features.parameters(), 'lr': 5e-3},
-            {'params': model.reduce_cqt_features.parameters(), 'lr': 5e-3},
-            {'params': model.classification_head.parameters(), 'lr': 5e-3},
-        ], weight_decay=1e-2)
+            {'params': model.mel_spectrograms_branch.parameters(), 'lr': 2e-5},
+            {'params': model.cqt_spectrograms_branch.parameters(), 'lr': 2e-5},
+            {'params': model.reduce_mlp_features.parameters(), 'lr': 1e-3},
+            {'params': model.reduce_cqt_features.parameters(), 'lr': 1e-3},
+            {'params': model.classification_head.parameters(), 'lr': 1e-3},
+        ], weight_decay=0.05)
 
-        # Reduce LR when val accuracy plateaus (fires before early stopping)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='max', factor=LR_FACTOR, patience=LR_PATIENCE
         )
@@ -103,6 +101,7 @@ def main():
                 #loss = mixup_criterion(criterion, logits, targets_a, targets_b, lam)
                 loss = criterion(logits, labels)
                 loss.backward()
+                # TODO: try out torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
                 train_loss += loss.item() * mel_img.size(0)

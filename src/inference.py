@@ -1,17 +1,31 @@
 import argparse
+import logging
+import math
+import sys
 
 import librosa
 import numpy as np
 import torch
 
 from cnn.model import DualSpectrogramClassificationModel
+from helpers.spectrograms import compute_spectrogram_pair
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s][%(name)s][%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
 # 'NoDance',
 DANCE_CLASSES = ['DiscoFox', 'ChaChaCha', 'Rumba', 'Jive', 'Quickstep', 'Tango', 'VienneseWaltz', 'Waltz']
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 CHECKPOINT_PATH = "best_vision_model.pt"
 SAMPLE_RATE = 22050
-CHUNK_DURATION = 5  # seconds
+
+CHUNK_DURATION = 15 # must be SAME as the one used for training
+INFERENCE_DURATION = 30   # seconds of audio to analyse at inference time (independent of CHUNK_DURATION)
+MIN_DURATION = 3
 
 
 def load_model(checkpoint_path: str) -> DualSpectrogramClassificationModel:
@@ -29,27 +43,63 @@ def load_model(checkpoint_path: str) -> DualSpectrogramClassificationModel:
     model.eval()
     return model
 
+def validate_durations(total_duration: int) -> bool:
+    if total_duration < MIN_DURATION:
+        raise ValueError(f"Audio is too short ({total_duration:.1f}s < {MIN_DURATION}s). Skipping.")
 
-def _min_max_normalize(array: np.ndarray) -> np.ndarray:
-    """Normalise a 2D array to [0, 1].
+    inference_duration = min(INFERENCE_DURATION, total_duration)
+    if inference_duration < MIN_DURATION:
+        raise ValueError(
+            f"Inference duration ({inference_duration:.1f}s) is below the minimum of {MIN_DURATION}s. Skipping."
+        )
 
-    Args:
-        array: Input 2D numpy array.
+    if inference_duration < CHUNK_DURATION:
+        logger.warning(
+            f"Inference duration ({inference_duration:.1f}s) is shorter than the training chunk size "
+            f"({CHUNK_DURATION}s). Prediction quality may be reduced."
+        )
+        return False
+
+    return True
+
+def extract_chunks(audio_path: str) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Load audio, center a window of *inference_duration* seconds, and return
+    (mel, cqt) pairs for each CHUNK_DURATION-sized slice with 50 % overlap.
 
     Returns:
-        Normalised array, or the original if range is zero.
+        List of (mel, cqt) array pairs — one entry per chunk.
+
+    Raises:
+        ValueError: if the audio or requested duration is below MIN_DURATION.
     """
-    min_val, max_val = array.min(), array.max()
-    if max_val - min_val == 0:
-        return array
-    return (array - min_val) / (max_val - min_val)
+    total_duration = math.floor(librosa.get_duration(path=audio_path))
+    if not validate_durations(total_duration):
+        return []
+    else:
+        inference_duration = min(INFERENCE_DURATION, total_duration)
+
+    # Center the inference window inside the track
+    centre = total_duration / 2
+    offset = max(0.0, min(centre - inference_duration / 2, total_duration - inference_duration))
+    y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, offset=offset, duration=inference_duration)
+
+    samples_per_chunk = int(CHUNK_DURATION * SAMPLE_RATE)
+
+    # for short inference_duration return only one chunk
+    if len(y) < samples_per_chunk:
+        return [compute_spectrogram_pair(y, SAMPLE_RATE)]
+
+    # Sliding-window chunking for long inference_duration
+    hop_samples = samples_per_chunk // 2
+    total_chunks = (len(y) - samples_per_chunk) // hop_samples + 1
+    return [
+        compute_spectrogram_pair(y[i * hop_samples: i * hop_samples + samples_per_chunk], SAMPLE_RATE)
+        for i in range(total_chunks)
+    ]
 
 
 def generate_spectrograms(audio_path: str) -> tuple[np.ndarray, np.ndarray]:
     """Load an audio file and generate mel and CQT spectrograms from a 30-second middle chunk.
-
-    Replicates the preprocessing pipeline used during training (min-max normalisation).
-    Only the required chunk is decoded, avoiding loading the full file into memory.
 
     Args:
         audio_path: Path to the input audio file (.wav, .mp3, etc.).
@@ -69,52 +119,30 @@ def generate_spectrograms(audio_path: str) -> tuple[np.ndarray, np.ndarray]:
     offset = min(total_duration / 2, total_duration - CHUNK_DURATION)
     y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, offset=offset, duration=CHUNK_DURATION)
 
-    # Mel spectrogram
-    mel = librosa.feature.melspectrogram(y=y, sr=SAMPLE_RATE, n_mels=128, hop_length=512)
-    mel_db = librosa.power_to_db(mel, ref=np.max)
-    mel_normalized = _min_max_normalize(mel_db).astype(np.float32)
+    return compute_spectrogram_pair(y, SAMPLE_RATE)
 
-    # CQT
-    cqt = librosa.cqt(y=y, sr=SAMPLE_RATE, hop_length=512, n_bins=84)
-    cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
-    cqt_normalized = _min_max_normalize(cqt_db).astype(np.float32)
-
-    return mel_normalized, cqt_normalized
-
-
-def _to_tensor(array: np.ndarray) -> torch.Tensor:
-    """Convert a 2D spectrogram array to a model-ready tensor with Z-score normalisation.
-
-    Args:
-        array: 2D float32 numpy array.
-
-    Returns:
-        Float32 tensor of shape ``(1, 1, H, W)`` on ``DEVICE``.
-    """
-    array = (array - array.mean()) / (array.std() + 1e-6)
-    return torch.tensor(array).unsqueeze(0).unsqueeze(0).to(DEVICE)
-
-
-def predict(model: DualSpectrogramClassificationModel, mel: np.ndarray, cqt: np.ndarray) -> tuple[str, dict[str, float]]:
-    """Run inference on a (mel, cqt) spectrogram pair.
+def predict(model: DualSpectrogramClassificationModel,  chunks: list[tuple[np.ndarray, np.ndarray]]) -> tuple[str, dict[str, float]]:
+    """Run inference on multiple (mel, cqt) spectrogram pairs.
 
     Args:
         model: A loaded DualStreamVisionNet in eval mode.
-        mel: 2D mel spectrogram array.
-        cqt: 2D CQT spectrogram array.
+        chunks: List of mel and cqt spectrogram pairs.
 
     Returns:
         Tuple of (predicted_class_name, {class_name: probability}).
     """
-    img_v1 = _to_tensor(mel)
-    img_v2 = _to_tensor(cqt)
+    all_probs = []
+    for mel, cqt in chunks:
+        mel_img = torch.tensor(mel).unsqueeze(0).unsqueeze(0).to(DEVICE)
+        cqt_img = torch.tensor(cqt).unsqueeze(0).unsqueeze(0).to(DEVICE)
 
-    with torch.no_grad():
-        logits = model(img_v1, img_v2)
-        probs = torch.softmax(logits, dim=1).squeeze(0).cpu().tolist()
+        with torch.no_grad():
+            logits = model(mel_img, cqt_img)
+            all_probs.append(torch.softmax(logits, dim=1).squeeze(0).cpu())
 
-    predicted_idx = int(torch.tensor(probs).argmax())
-    prob_map = {cls: round(p, 4) for cls, p in zip(DANCE_CLASSES, probs)}
+    avg_probs = torch.stack(all_probs).mean(dim=0).cpu().tolist()
+    predicted_idx = int(np.argmax(avg_probs))
+    prob_map = {cls: round(p, 4) for cls, p in zip(DANCE_CLASSES, avg_probs)}
     return DANCE_CLASSES[predicted_idx], prob_map
 
 
@@ -127,10 +155,14 @@ def main() -> None:
     print(f"Loading model from: {CHECKPOINT_PATH}")
     model = load_model(CHECKPOINT_PATH)
 
-    print(f"Generating spectrograms from first {CHUNK_DURATION}s of: {args.audio}")
-    mel, cqt = generate_spectrograms(args.audio)
+    print(f"Generating spectrograms for: {args.audio}")
+    try:
+        chunks = extract_chunks(args.audio)
+    except ValueError as e:
+        logger.error(e)
+        return
 
-    predicted_class, probabilities = predict(model, mel, cqt)
+    predicted_class, probabilities = predict(model, chunks)
 
     print(f"\nPredicted class : {predicted_class}")
     print("Probabilities:")

@@ -27,7 +27,7 @@ def _load_grayscale_mobile_net_backbone(checkpoint_path: str) -> nn.Module:
         pretrained=False,
         in_chans=1,
         num_classes=0,
-        drop_path_rate=0.4, # TODO: added stochastic depth, which is a strong regularizer
+        drop_path_rate=0.25,
     )
     model.load_state_dict(state_dict, strict=False)
     return model
@@ -87,7 +87,7 @@ class DualSpectrogramClassificationModel(nn.Module):
         #spatial_features_mel = self.reduce_mlp_features(spatial_features_mel)
         #spatial_features_cqt = self.reduce_cqt_features(spatial_features_cqt)
 
-        # Late Fusion: Concatenate the visual visual_embeddings from both image representations
+        # Late Fusion: Concatenate the visual image_embeddings from both image representations
         fused_visual_features = torch.cat((spatial_features_mel, spatial_features_cqt), dim=1)
 
         # Classify the fused visual patterns

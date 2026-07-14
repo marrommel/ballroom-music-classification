@@ -1,7 +1,9 @@
-import os
 import glob
+import os
+
 import numpy as np
 import torch
+import torchaudio.transforms as audio_transforms
 from torch.utils.data import Dataset
 
 
@@ -11,21 +13,6 @@ class SpectrogramImageDataset(Dataset):
         self.base_dir = base_dir
         self.train = train
 
-    def _augment(self, spec: np.ndarray) -> np.ndarray:
-        """Apply SpecAugment-style masking. Operates on a normalized 2D spectrogram."""
-        H, W = spec.shape
-        # Frequency masking (up to 2 bands)
-        for _ in range(np.random.randint(0, 3)):
-            f = np.random.randint(0, max(1, H // 8))
-            f0 = np.random.randint(0, max(1, H - f))
-            spec[f0:f0 + f, :] = 0.0
-        # Time masking (up to 2 bands)
-        for _ in range(np.random.randint(0, 3)):
-            t = np.random.randint(0, max(1, W // 8))
-            t0 = np.random.randint(0, max(1, W - t))
-            spec[:, t0:t0 + t] = 0.0
-        return spec
-
     def __len__(self):
         return len(self.image_patch_list)
 
@@ -33,37 +20,64 @@ class SpectrogramImageDataset(Dataset):
         image_metadata = self.image_patch_list[idx]
 
         # Load 2D matrices (Grayscale Images)
-        img_array_mel = np.load(image_metadata['view1_image_path'])
-        img_array_cqt = np.load(image_metadata['view2_image_path'])
+        img_array_mel = np.load(image_metadata['mel_image_path'])
+        img_array_cqt = np.load(image_metadata['cqt_image_path'])
+
+        # Convert to tensors with channel dimension: (Channels=1, Height, Width)
+        img_tensor_mel = torch.tensor(img_array_mel, dtype=torch.float32).unsqueeze(0)
+        img_tensor_cqt = torch.tensor(img_array_cqt, dtype=torch.float32).unsqueeze(0)
+
+        # 2. Pixel Intensity Normalization (Z-score standardization)
+        #img_tensor_mel = (img_tensor_mel - img_tensor_mel.mean()) / (img_tensor_mel.std() + 1e-6)
+        #img_tensor_cqt = (img_tensor_cqt - img_tensor_cqt.mean()) / (img_tensor_cqt.std() + 1e-6)
 
         if self.train:
             # Time-shift (roll) — dance rhythm is periodic, so wrap-around is valid
-            shift = np.random.randint(0, img_array_mel.shape[1])
-            img_array_mel = np.roll(img_array_mel, shift, axis=1)
-            img_array_cqt = np.roll(img_array_cqt, shift, axis=1)
-            #img_array_mel = self._augment(img_array_mel)
-            #img_array_cqt = self._augment(img_array_cqt)
+            shift = torch.randint(0, img_tensor_mel.shape[2], (1,)).item()
+            img_tensor_mel = torch.roll(img_tensor_mel, shifts=shift, dims=2)
+            img_tensor_cqt = torch.roll(img_tensor_cqt, shifts=shift, dims=2)
+            img_tensor_mel = self._spec_augment(img_tensor_mel)
+            img_tensor_cqt = self._spec_augment(img_tensor_cqt)
 
-        # Pixel Intensity Normalization (Z-score standardization for image contrast)
-        img_array_mel = (img_array_mel - np.mean(img_array_mel)) / (np.std(img_array_mel) + 1e-6)
-        img_array_cqt = (img_array_cqt - np.mean(img_array_cqt)) / (np.std(img_array_cqt) + 1e-6)
-
-        # Convert to Vision Tensors and add a Channel dimension: (Channels=1, Height, Width)
-        img_tensor_v1 = torch.tensor(img_array_mel, dtype=torch.float32).unsqueeze(0)
-        img_tensor_v2 = torch.tensor(img_array_cqt, dtype=torch.float32).unsqueeze(0)
+        # return the preprocessed spectrograms as tensors
         label = torch.tensor(image_metadata['label'], dtype=torch.long)
+        return img_tensor_mel, img_tensor_cqt, label
 
-        return img_tensor_v1, img_tensor_v2, label
+    @staticmethod
+    def _spec_augment(
+            spec: torch.Tensor,
+            freq_mask_param: int = 15,
+            time_mask_param: int = 60
+    ) -> torch.Tensor:
+        """
+        Applies SpecAugment (Frequency and Time masking) to a spectrogram.
 
-def parse_image_dataset(base_dir: str, visual_classes: list[str]) -> dict:
+        Args:
+            spec (torch.Tensor): The input spectrogram tensor.
+            freq_mask_param (int): Maximum width of the frequency mask.
+            time_mask_param (int): Maximum width of the time mask.
+
+        Returns:
+            torch.Tensor: The augmented spectrogram.
+        """
+        # Create the transforms
+        freq_masking = audio_transforms.FrequencyMasking(freq_mask_param=freq_mask_param)
+        time_masking = audio_transforms.TimeMasking(time_mask_param=time_mask_param)
+
+        # Apply the transforms
+        augmented_tensor = time_masking(freq_masking(spec))
+
+        return augmented_tensor
+
+def parse_image_dataset(base_dir: str, dance_classes: list[str]) -> dict:
     """Parses the directory and groups image patches by their Parent Scene.
 
     Args:
         base_dir: Root directory containing ``mel/`` and ``cqt/`` subdirs.
-        visual_classes: List of dance-class folder names (must match on-disk names).
+        dance_classes: List of dance-class folder names (must match on-disk names).
 
     Returns:
-        Dict mapping parent_scene_id -> list of image-patch metadata dicts.
+        Dict mapping parent_song -> list of image-patch metadata dicts.
     """
     abs_base_dir = os.path.abspath(base_dir)
     mel_root = os.path.join(abs_base_dir, 'mel')
@@ -80,33 +94,35 @@ def parse_image_dataset(base_dir: str, visual_classes: list[str]) -> dict:
         else:
             print(f"[dataset]   WARNING: '{view_root}' does not exist")
 
-    # parent_scene_id as list of image patch dicts
-    scene_groups: dict = {}
+    # parent_song as list of image patch dicts
+    song_groups: dict = {}
 
-    for label_idx, visual_class in enumerate(visual_classes):
-        view1_dir = os.path.join(abs_base_dir, 'mel', visual_class)
-        search_pattern = os.path.join(view1_dir, '*.npy')
+    for label_idx, dance_class in enumerate(dance_classes):
+        mel_dir = os.path.join(abs_base_dir, 'mel', dance_class)
+        search_pattern = os.path.join(mel_dir, '*.npy')
 
-        for view1_path in glob.glob(search_pattern):
-            filename = os.path.basename(view1_path)
+        for mel_img_path in glob.glob(search_pattern):
+            filename = os.path.basename(mel_img_path)
 
-            # Extract parent scene ID: "Albums-Fire-03_chunk000_mel.npy" -> "Albums-Fire-03"
-            parent_scene_id = filename.split('_chunk')[0]
+            # extract the song name of the spectrogram chunk
+            parent_song = filename.split('_chunk')[0]
 
-            view2_filename = filename.replace('_mel.npy', '_cqt.npy')
-            view2_path = os.path.join(abs_base_dir, 'cqt', visual_class, view2_filename)
+            # build the cqt image path for the corresponding mel image
+            cqt_filename = filename.replace('_mel.npy', '_cqt.npy')
+            cqt_img_path = os.path.join(abs_base_dir, 'cqt', dance_class, cqt_filename)
 
-            if not os.path.exists(view2_path):
-                continue  # Skip if missing the matching visual view
+            # skip if the matching cqt image is missing
+            if not os.path.exists(cqt_img_path):
+                continue
 
-            if parent_scene_id not in scene_groups:
-                scene_groups[parent_scene_id] = []
+            if parent_song not in song_groups:
+                song_groups[parent_song] = []
 
-            scene_groups[parent_scene_id].append({
-                'view1_image_path': view1_path,
-                'view2_image_path': view2_path,
+            song_groups[parent_song].append({
+                'mel_image_path': mel_img_path,
+                'cqt_image_path': cqt_img_path,
                 'label': label_idx,
-                'parent_scene_id': parent_scene_id
+                'parent_song': parent_song
             })
 
-    return scene_groups
+    return song_groups

@@ -22,7 +22,7 @@ from inference import (
     generate_spectrograms,
     predict,
     DANCE_CLASSES,
-    CHECKPOINT_PATH
+    CHECKPOINT_PATH, extract_chunks
 )
 
 
@@ -105,14 +105,9 @@ def plot_roc_curves(y_true, y_scores, output_path: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate DualStreamVisionNet on an audio directory.")
-    parser.add_argument("--audio_dir", default="test_data_set", help="Directory containing .wav files")
-    parser.add_argument("--output_dir", default="results", help="Directory to save HTML plots")
-    args = parser.parse_args()
-
     # Setup directories
-    audio_dir = Path(args.audio_dir)
-    output_dir = Path(args.output_dir)
+    audio_dir = Path("test_data_set")
+    output_dir = Path("results")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not audio_dir.exists():
@@ -128,12 +123,8 @@ def main():
     print(f"Loading model from: {CHECKPOINT_PATH}")
     model = load_model(CHECKPOINT_PATH)
 
-    y_true_indices = []
-    y_pred_indices = []
-    y_scores_list = []
-
     print(f"Evaluating {len(wav_files)} files...")
-    # Wrap loop in tqdm for a progress bar
+    y_true_indices, y_pred_indices, y_scores_list = [], [], []
     for filepath in tqdm(wav_files):
         true_class = get_true_label(filepath)
 
@@ -143,15 +134,17 @@ def main():
 
         # Extract features
         try:
-            mel, cqt = generate_spectrograms(str(filepath))
+            chunks = extract_chunks(str(filepath))
         except ValueError as e:
             tqdm.write(f"Skipping {filepath.name}: {e}")
             continue
 
-        # Inference
-        predicted_class, prob_map = predict(model, mel, cqt)
+        if not chunks:
+            tqdm.write(f"Skipping {filepath.name}: no chunks extracted (audio too short).")
+            continue
 
-        # Convert dictionary map back to an aligned list of probabilities for top-k/roc metrics
+        # Inference
+        predicted_class, prob_map = predict(model, chunks)
         probs = [prob_map[cls] for cls in DANCE_CLASSES]
 
         # Store for metrics

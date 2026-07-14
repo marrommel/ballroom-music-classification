@@ -14,11 +14,32 @@ def __min_max_normalize(array):
         return array
     return (array - min_val) / (max_val - min_val)
 
+def compute_spectrogram_pair(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray]:
+    """Compute a min-max normalized (Mel, CQT) spectrogram pair from a raw audio array.
+
+    Args:
+        audio:  1-D float32 audio samples.
+        sample_rate: Sample rate of the audio file.
+
+    Returns:
+        Tuple of normalized Mel and CQT spectrograms.
+    """
+    # Mel spectrogram
+    mel = librosa.feature.melspectrogram(y=audio, sr=sample_rate, n_mels=128, hop_length=512)
+    mel_db = librosa.power_to_db(mel, ref=np.max)
+    mel_normalized = __min_max_normalize(mel_db).astype(np.float32)
+
+    # CQT — 84 bins = 7 octaves × 12 semitones
+    cqt = librosa.cqt(y=audio, sr=sample_rate, hop_length=512, n_bins=84)
+    cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
+    cqt_normalized = __min_max_normalize(cqt_db).astype(np.float32)
+
+    return mel_normalized, cqt_normalized
 
 def save_spectrograms(
     audio_path: str,
     chunk_duration: int,
-    output_root: str = "visual_embeddings",
+    output_root: str = "image_embeddings",
     category: str = "",
 ) -> tuple[str, str]:
     """
@@ -36,14 +57,12 @@ def save_spectrograms(
 
     logger.info(f"Processing: {audio_path}")
 
-    # Standard sample rate for MIR is 22050Hz (good balance of quality and performance)
-    sr = 22050
-
     # Load the audio file
-    y, sr = librosa.load(audio_path, sr=sr)
+    sample_rate = 22050
+    y, sample_rate = librosa.load(audio_path, sr=sample_rate)
 
     # Calculate how many samples make up our chunk
-    samples_per_chunk = int(chunk_duration * sr)
+    samples_per_chunk = int(chunk_duration * sample_rate)
     hop_samples = samples_per_chunk // 2  # 50% overlap sliding window
     total_chunks = max(0, (len(y) - samples_per_chunk) // hop_samples + 1)
 
@@ -56,27 +75,14 @@ def save_spectrograms(
         if "YouTube" in audio_path and (i == 0 or i == total_chunks - 1):
             continue
 
-        # 1. Slice the audio into a chunk with 50% hop
+        # Slice the audio into a chunk with 50% hop
         start_sample = i * hop_samples
         end_sample = start_sample + samples_per_chunk
         y_chunk = y[start_sample:end_sample]
 
-        # 2. GENERATE MEL-SPECTROGRAM
-        # hop_length=512 means the "width" of our image will be roughly 130 pixels per 3 sec
-        # n_mels=128 means the "height" of our image will be 128 pixels
-        mel = librosa.feature.melspectrogram(y=y_chunk, sr=sr, n_mels=128, hop_length=512)
-        mel_db = librosa.power_to_db(mel, ref=np.max)  # Convert to log scale (Decibels)
-        mel_normalized = __min_max_normalize(mel_db)  # Scale 0 to 1
+        mel_normalized, cqt_normalized = compute_spectrogram_pair(y_chunk, sample_rate)
 
-        # 3. GENERATE CQT (Constant-Q Transform)
-        # n_bins=84 covers exactly 7 octaves of music (12 notes * 7 octaves)
-        cqt = librosa.cqt(y=y_chunk, sr=sr, hop_length=512, n_bins=84)
-        cqt_mag = np.abs(cqt)  # Get magnitude (discard complex phase)
-        cqt_db = librosa.amplitude_to_db(cqt_mag, ref=np.max)  # Convert to Decibels
-        cqt_normalized = __min_max_normalize(cqt_db)  # Scale 0 to 1
-
-        # 4. SAVE AS NUMPY ARRAYS (.npy)
-        # The CNN will load these much faster than reading PNG files.
+        # save spectrograms as numpy arrays to avoid loading PNG files
         mel_path = os.path.join(mel_dir, f"{song_name}_chunk{i:03d}_mel.npy")
         cqt_path = os.path.join(cqt_dir, f"{song_name}_chunk{i:03d}_cqt.npy")
 

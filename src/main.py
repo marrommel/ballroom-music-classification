@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 # configuration
 DATA_DIR = "train_data_set"
-OUTPUT_ROOT = "visual_embeddings"
-CHUNK_DURATION = 5
+OUTPUT_ROOT = "image_embeddings"
+CHUNK_DURATION = 15
 AUDIO_EXTENSIONS = (".mp3", ".wav")
 
 
@@ -23,7 +23,7 @@ def build_dataset() -> None:
     Walk the data/ directory and generate Mel & CQT spectrograms for every audio
     file found.
 
-    Output path: visual_embeddings/[mel|cqt]/[dance_type]/[songname_chunkNNN_melORcqt.npy]
+    Output path: image_embeddings/[mel|cqt]/[dance_type]/[songname_chunkNNN_melORcqt.npy]
     """
     if not os.path.isdir(DATA_DIR):
         logger.error(f"Data directory '{DATA_DIR}' not found. Nothing to process.")
