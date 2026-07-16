@@ -47,13 +47,13 @@ def build_dataset() -> None:
         for file_name in audio_files:
             audio_path = os.path.join(root, file_name)
             try:
-                mel_path, cqt_path = save_spectrograms(
+                mel_path, cqt_path, temp_path = save_spectrograms(
                     audio_path,
                     CHUNK_DURATION,
                     output_root=OUTPUT_ROOT,
                     category=dance_type,
                 )
-                if not (mel_path and cqt_path):
+                if not (mel_path and cqt_path and temp_path):
                     logger.error(f"No spectrograms produced for {audio_path}")
                     failed += 1
                     continue

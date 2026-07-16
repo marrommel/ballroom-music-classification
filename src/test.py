@@ -1,11 +1,8 @@
-import argparse
 from pathlib import Path
 
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from tqdm import tqdm
-
 from sklearn.metrics import (
     confusion_matrix,
     classification_report,
@@ -15,11 +12,11 @@ from sklearn.metrics import (
     auc
 )
 from sklearn.preprocessing import label_binarize
+from tqdm import tqdm
 
 # IMPORTANT: Adjust "inference" if your original script is named differently (e.g., "main.py")
 from inference import (
     load_model,
-    generate_spectrograms,
     predict,
     DANCE_CLASSES,
     CHECKPOINT_PATH, extract_chunks

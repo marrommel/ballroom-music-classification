@@ -27,7 +27,7 @@ def _load_grayscale_mobile_net_backbone(checkpoint_path: str) -> nn.Module:
         pretrained=False,
         in_chans=1,
         num_classes=0,
-        drop_path_rate=0.25,
+        drop_path_rate=0.15, # Todo: 0.15
     )
     model.load_state_dict(state_dict, strict=False)
     return model
@@ -61,10 +61,20 @@ class DualSpectrogramClassificationModel(nn.Module):
             nn.GELU()
         )
 
+        fused_dim = reduced_dim * 2
+        self.classification_head = nn.Sequential(
+            nn.Dropout(p=dropout_rate),
+            nn.Linear(fused_dim, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(p=dropout_rate / 1.5),
+            nn.Linear(256, num_classes),
+        )
+
         # Custom Multi-Layer Perceptron (MLP) head for visual feature fusion
         # TODO: Use this with reduce_dim --> fused_dim = reduced_dim * 2
         fused_dim = _feat_dim * 2
-        self.classification_head = nn.Sequential(
+        self.classification_head_backup = nn.Sequential(
             nn.Dropout(p=dropout_rate),
             nn.Linear(fused_dim, 256),
             nn.BatchNorm1d(256),
@@ -84,8 +94,8 @@ class DualSpectrogramClassificationModel(nn.Module):
         spatial_features_mel = self.mel_spectrograms_branch(mel_image)
         spatial_features_cqt = self.cqt_spectrograms_branch(cqt_image)
 
-        #spatial_features_mel = self.reduce_mlp_features(spatial_features_mel)
-        #spatial_features_cqt = self.reduce_cqt_features(spatial_features_cqt)
+        spatial_features_mel = self.reduce_mlp_features(spatial_features_mel)
+        spatial_features_cqt = self.reduce_cqt_features(spatial_features_cqt)
 
         # Late Fusion: Concatenate the visual image_embeddings from both image representations
         fused_visual_features = torch.cat((spatial_features_mel, spatial_features_cqt), dim=1)

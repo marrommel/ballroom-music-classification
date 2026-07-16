@@ -55,23 +55,24 @@ def main():
         val_image_patches = [all_spectrogram_chunks[i] for i in val_idx]
 
         # Create PyTorch DataLoaders for the Vision models
-        train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, IMAGE_DATASET_DIR, train=True),
+        train_loader = DataLoader(SpectrogramImageDataset(train_image_patches, train=True),
                                   batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-        val_loader = DataLoader(SpectrogramImageDataset(val_image_patches, IMAGE_DATASET_DIR, train=False),
+        val_loader = DataLoader(SpectrogramImageDataset(val_image_patches, train=False),
                                 batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
 
         # Initialize CNN Model, Loss Function, and Optimizer
         model = DualSpectrogramClassificationModel(num_classes=len(DANCE_CLASSES)).to(DEVICE)
         # TODO: added label_smoothing to reduce the problem of Ballroom classes being genuinely confusable
-        criterion = nn.CrossEntropyLoss() #label_smoothing=0.1
+        criterion = nn.CrossEntropyLoss() #TODO: label_smoothing=0.15
 
-        optimizer = torch.optim.AdamW([
-            {'params': model.mel_spectrograms_branch.parameters(), 'lr': 2e-5},
-            {'params': model.cqt_spectrograms_branch.parameters(), 'lr': 2e-5},
-            {'params': model.reduce_mlp_features.parameters(), 'lr': 1e-3},
-            {'params': model.reduce_cqt_features.parameters(), 'lr': 1e-3},
-            {'params': model.classification_head.parameters(), 'lr': 1e-3},
-        ], weight_decay=0.05)
+        optimizer = torch.optim.AdamW(model.parameters(),1e-4, weight_decay=0.05)
+        # Todo: optimizer = torch.optim.AdamW([
+        #    {'params': model.mel_spectrograms_branch.parameters(), 'lr': 1.5e-5},
+        #    {'params': model.cqt_spectrograms_branch.parameters(), 'lr': 1.5e-5},
+        #    {'params': model.reduce_mlp_features.parameters(), 'lr': 5e-4},
+        #    {'params': model.reduce_cqt_features.parameters(), 'lr': 5e-4},
+        #    {'params': model.classification_head.parameters(), 'lr': 5e-4},
+        #], weight_decay=0.05)
 
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='max', factor=LR_FACTOR, patience=LR_PATIENCE
@@ -94,14 +95,14 @@ def main():
                 mel_img, cqt_img, labels = mel_img.to(DEVICE), cqt_img.to(DEVICE), labels.to(DEVICE)
 
                 # Apply MixUp
-                #mel_img, cqt_img, targets_a, targets_b, lam = mixup_data(mel_img, cqt_img, labels, alpha=0.1)
+                mel_img, cqt_img, targets_a, targets_b, lam = mixup_data(mel_img, cqt_img, labels, alpha=0.1)
 
                 optimizer.zero_grad()
                 logits = model(mel_img, cqt_img)
-                #loss = mixup_criterion(criterion, logits, targets_a, targets_b, lam)
-                loss = criterion(logits, labels)
+                loss = mixup_criterion(criterion, logits, targets_a, targets_b, lam)
+                # loss = criterion(logits, labels)
                 loss.backward()
-                # TODO: try out torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                # TODO torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
 
                 train_loss += loss.item() * mel_img.size(0)

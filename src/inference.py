@@ -24,7 +24,7 @@ CHECKPOINT_PATH = "best_vision_model.pt"
 SAMPLE_RATE = 22050
 
 CHUNK_DURATION = 15 # must be SAME as the one used for training
-INFERENCE_DURATION = 30   # seconds of audio to analyse at inference time (independent of CHUNK_DURATION)
+INFERENCE_DURATION = 30   # seconds of audio to analyze at inference time (independent of CHUNK_DURATION)
 MIN_DURATION = 3
 
 
@@ -62,7 +62,7 @@ def validate_durations(total_duration: int) -> bool:
 
     return True
 
-def extract_chunks(audio_path: str) -> list[tuple[np.ndarray, np.ndarray]]:
+def extract_chunks(audio_path: str) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """Load audio, center a window of *inference_duration* seconds, and return
     (mel, cqt) pairs for each CHUNK_DURATION-sized slice with 50 % overlap.
 
@@ -80,7 +80,7 @@ def extract_chunks(audio_path: str) -> list[tuple[np.ndarray, np.ndarray]]:
 
     # Center the inference window inside the track
     centre = total_duration / 2
-    offset = max(0.0, min(centre - inference_duration / 2, total_duration - inference_duration))
+    offset = 0 #max(0.0, min(centre - inference_duration / 2, total_duration - inference_duration))
     y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, offset=offset, duration=inference_duration)
 
     samples_per_chunk = int(CHUNK_DURATION * SAMPLE_RATE)
@@ -97,31 +97,7 @@ def extract_chunks(audio_path: str) -> list[tuple[np.ndarray, np.ndarray]]:
         for i in range(total_chunks)
     ]
 
-
-def generate_spectrograms(audio_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load an audio file and generate mel and CQT spectrograms from a 30-second middle chunk.
-
-    Args:
-        audio_path: Path to the input audio file (.wav, .mp3, etc.).
-
-    Returns:
-        Tuple of (mel_array, cqt_array), each a 2D float32 numpy array.
-
-    Raises:
-        ValueError: If the audio is shorter than ``CHUNK_DURATION`` seconds.
-    """
-    total_duration = librosa.get_duration(path=audio_path)
-    if total_duration < CHUNK_DURATION:
-        raise ValueError(
-            f"Audio is too short: {total_duration:.1f}s, need at least {CHUNK_DURATION}s."
-        )
-
-    offset = min(total_duration / 2, total_duration - CHUNK_DURATION)
-    y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, offset=offset, duration=CHUNK_DURATION)
-
-    return compute_spectrogram_pair(y, SAMPLE_RATE)
-
-def predict(model: DualSpectrogramClassificationModel,  chunks: list[tuple[np.ndarray, np.ndarray]]) -> tuple[str, dict[str, float]]:
+def predict(model: DualSpectrogramClassificationModel,  chunks: list[tuple[np.ndarray, np.ndarray,np.ndarray]]) -> tuple[str, dict[str, float]]:
     """Run inference on multiple (mel, cqt) spectrogram pairs.
 
     Args:
@@ -132,12 +108,14 @@ def predict(model: DualSpectrogramClassificationModel,  chunks: list[tuple[np.nd
         Tuple of (predicted_class_name, {class_name: probability}).
     """
     all_probs = []
-    for mel, cqt in chunks:
+    for mel, cqt, temp in chunks:
         mel_img = torch.tensor(mel).unsqueeze(0).unsqueeze(0).to(DEVICE)
         cqt_img = torch.tensor(cqt).unsqueeze(0).unsqueeze(0).to(DEVICE)
+        temp_img = torch.tensor(temp).unsqueeze(0).unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
-            logits = model(mel_img, cqt_img)
+            # TODO: adjust input
+            logits = model(mel_img, temp_img)
             all_probs.append(torch.softmax(logits, dim=1).squeeze(0).cpu())
 
     avg_probs = torch.stack(all_probs).mean(dim=0).cpu().tolist()

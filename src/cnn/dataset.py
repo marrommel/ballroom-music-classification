@@ -8,9 +8,8 @@ from torch.utils.data import Dataset
 
 
 class SpectrogramImageDataset(Dataset):
-    def __init__(self, image_patch_list, base_dir, train: bool = False):
+    def __init__(self, image_patch_list, train: bool = False):
         self.image_patch_list = image_patch_list
-        self.base_dir = base_dir
         self.train = train
 
     def __len__(self):
@@ -33,9 +32,9 @@ class SpectrogramImageDataset(Dataset):
 
         if self.train:
             # Time-shift (roll) — dance rhythm is periodic, so wrap-around is valid
-            shift = torch.randint(0, img_tensor_mel.shape[2], (1,)).item()
-            img_tensor_mel = torch.roll(img_tensor_mel, shifts=shift, dims=2)
-            img_tensor_cqt = torch.roll(img_tensor_cqt, shifts=shift, dims=2)
+            #TODO: shift = torch.randint(0, img_tensor_mel.shape[2], (1,)).item()
+            #img_tensor_mel = torch.roll(img_tensor_mel, shifts=shift, dims=2)
+            #img_tensor_cqt = torch.roll(img_tensor_cqt, shifts=shift, dims=2)
             img_tensor_mel = self._spec_augment(img_tensor_mel)
             img_tensor_cqt = self._spec_augment(img_tensor_cqt)
 
@@ -79,9 +78,10 @@ def parse_image_dataset(base_dir: str, dance_classes: list[str]) -> dict:
     Returns:
         Dict mapping parent_song -> list of image-patch metadata dicts.
     """
+    # TODO: change input
     abs_base_dir = os.path.abspath(base_dir)
     mel_root = os.path.join(abs_base_dir, 'mel')
-    cqt_root = os.path.join(abs_base_dir, 'cqt')
+    cqt_root = os.path.join(abs_base_dir, 'temp')
 
     print(f"[dataset] base_dir resolved to: {abs_base_dir}")
     for view_root, view_name in ((mel_root, 'mel'), (cqt_root, 'cqt')):
@@ -98,6 +98,7 @@ def parse_image_dataset(base_dir: str, dance_classes: list[str]) -> dict:
     song_groups: dict = {}
 
     for label_idx, dance_class in enumerate(dance_classes):
+        # TODO: change input
         mel_dir = os.path.join(abs_base_dir, 'mel', dance_class)
         search_pattern = os.path.join(mel_dir, '*.npy')
 
@@ -108,8 +109,9 @@ def parse_image_dataset(base_dir: str, dance_classes: list[str]) -> dict:
             parent_song = filename.split('_chunk')[0]
 
             # build the cqt image path for the corresponding mel image
-            cqt_filename = filename.replace('_mel.npy', '_cqt.npy')
-            cqt_img_path = os.path.join(abs_base_dir, 'cqt', dance_class, cqt_filename)
+            # TODO: change input
+            cqt_filename = filename.replace('_mel.npy', '_temp.npy')
+            cqt_img_path = os.path.join(abs_base_dir, 'temp', dance_class, cqt_filename)
 
             # skip if the matching cqt image is missing
             if not os.path.exists(cqt_img_path):
