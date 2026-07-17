@@ -14,14 +14,11 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 from tqdm import tqdm
 
-# IMPORTANT: Adjust "inference" if your original script is named differently (e.g., "main.py")
-from inference import (
-    load_model,
-    predict,
-    DANCE_CLASSES,
-    CHECKPOINT_PATH, extract_chunks
-)
+from config import Config
+from inference import load_model, predict, extract_chunks
 
+_config = Config()
+DANCE_CLASSES = _config.dance_classes
 
 def get_true_label(filepath: Path) -> str:
     """
@@ -102,23 +99,25 @@ def plot_roc_curves(y_true, y_scores, output_path: str):
 
 
 def main():
+    config = Config()
+
     # Setup directories
-    audio_dir = Path("test_data_set")
+    test_data_dir = Path("assets/test_data_set")
     output_dir = Path("results")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if not audio_dir.exists():
-        print(f"Error: Directory '{audio_dir}' not found.")
+    if not test_data_dir.exists():
+        print(f"Error: Directory '{test_data_dir}' not found.")
         return
 
     # Gather audio files
-    wav_files = list(audio_dir.rglob("*.wav"))
+    wav_files = list(test_data_dir.rglob("*.wav"))
     if not wav_files:
-        print(f"No .wav files found in '{audio_dir}'.")
+        print(f"No .wav files found in '{test_data_dir}'.")
         return
 
-    print(f"Loading model from: {CHECKPOINT_PATH}")
-    model = load_model(CHECKPOINT_PATH)
+    print(f"Loading model from: {config.inference_model_weights}")
+    model = load_model(config.inference_model_weights)
 
     print(f"Evaluating {len(wav_files)} files...")
     y_true_indices, y_pred_indices, y_scores_list = [], [], []
@@ -131,7 +130,7 @@ def main():
 
         # Extract features
         try:
-            chunks = extract_chunks(str(filepath))
+            chunks = extract_chunks(str(filepath), config.spec_types)
         except ValueError as e:
             tqdm.write(f"Skipping {filepath.name}: {e}")
             continue

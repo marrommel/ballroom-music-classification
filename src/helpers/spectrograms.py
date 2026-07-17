@@ -16,35 +16,46 @@ def __min_max_normalize(array):
     return (array - min_val) / (max_val - min_val)
 
 
-def compute_spectrogram_pair(audio: np.ndarray, sample_rate: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute a min-max normalized (Mel, CQT) spectrogram pair from a raw audio array.
+def compute_spectrograms(audio: np.ndarray, sample_rate: int, spec_types: list[str]) -> dict[str, np.ndarray]:
+    """Compute min-max normalized spectrograms for the requested types only.
 
     Args:
-        audio:  1-D float32 audio samples.
+        audio: 1-D float32 audio samples.
         sample_rate: Sample rate of the audio file.
+        spec_types: Which spectrograms to compute. Supported: 'mel', 'cqt', 'temp'.
 
     Returns:
-        Tuple of normalized Mel and CQT spectrograms.
+        Dict mapping each requested spec type to its normalized np.ndarray.
+
+    Raises:
+        ValueError: If an unknown spec type is requested.
     """
-    # Mel spectrogram
-    mel = librosa.feature.melspectrogram(y=audio, sr=sample_rate, n_mels=128, hop_length=512)
-    mel_db = librosa.power_to_db(mel, ref=np.max)
-    mel_normalized = __min_max_normalize(mel_db).astype(np.float32)
+    specs: dict[str, np.ndarray] = {}
+    _onset_env = None  # computed lazily, shared if 'temp' is requested
 
-    # CQT — 84 bins = 7 octaves × 12 semitones
-    cqt = librosa.cqt(y=audio, sr=sample_rate, hop_length=512, n_bins=84)
-    cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
-    cqt_normalized = __min_max_normalize(cqt_db).astype(np.float32)
+    for spec_type in spec_types:
+        if spec_type == "mel":
+            mel = librosa.feature.melspectrogram(y=audio, sr=sample_rate, n_mels=128, hop_length=512)
+            mel_db = librosa.power_to_db(mel, ref=np.max)
+            specs["mel"] = __min_max_normalize(mel_db).astype(np.float32)
 
-    # Tempogram (Rhythm / BPM / Beat structure)
-    # First, compute the onset strength envelope (highlights sudden percussive attacks)
-    onset_env = librosa.onset.onset_strength(y=audio, sr=sample_rate, hop_length=512)
-    # Then compute the tempogram (Y-axis is local tempo / BPM)
-    # win_length=192 at hop 512 & 22050Hz covers ~4.4 seconds of context for beat matching
-    tempogram = librosa.feature.tempogram(onset_envelope=onset_env, sr=sample_rate, hop_length=512, win_length=192)
-    tempogram_normalized = __min_max_normalize(tempogram).astype(np.float32)
+        elif spec_type == "cqt":
+            cqt = librosa.cqt(y=audio, sr=sample_rate, hop_length=512, n_bins=84)
+            cqt_db = librosa.amplitude_to_db(np.abs(cqt), ref=np.max)
+            specs["cqt"] = __min_max_normalize(cqt_db).astype(np.float32)
 
-    return mel_normalized, cqt_normalized, tempogram_normalized
+        elif spec_type == "temp":
+            if _onset_env is None:
+                _onset_env = librosa.onset.onset_strength(y=audio, sr=sample_rate, hop_length=512)
+            tempogram = librosa.feature.tempogram(
+                onset_envelope=_onset_env, sr=sample_rate, hop_length=512, win_length=192
+            )
+            specs["temp"] = __min_max_normalize(tempogram).astype(np.float32)
+
+        else:
+            raise ValueError(f"Unknown spec type '{spec_type}'. Supported: 'mel', 'cqt', 'temp'.")
+
+    return specs
 
 
 def save_spectrograms(
@@ -90,7 +101,8 @@ def save_spectrograms(
         end_sample = start_sample + samples_per_chunk
         y_chunk = y[start_sample:end_sample]
 
-        mel_normalized, cqt_normalized, temp_normalized = compute_spectrogram_pair(y_chunk, sample_rate)
+        specs = compute_spectrograms(y_chunk, sample_rate, ["mel", "cqt", "temp"])
+        mel_normalized, cqt_normalized, temp_normalized = specs["mel"], specs["cqt"], specs["temp"]
 
         # save spectrograms as numpy arrays to avoid loading PNG files
         mel_path = os.path.join(mel_dir, f"{song_name}_chunk{i:03d}_mel.npy")
