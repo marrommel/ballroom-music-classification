@@ -16,13 +16,13 @@ def sanitize_song_name(name: str) -> str:
 def download_song(youtube_url, dance_type, song_name):
     """Downloads a YouTube video as a WAV audio file using yt-dlp."""
     project_root = Path(__file__).parent.parent.parent
-    output_dir = project_root / "train_data_set" / dance_type
+    output_dir = project_root / "assets/test" / dance_type
     if not output_dir.exists():
         output_dir.mkdir(parents=True)
 
     safe_name = sanitize_song_name(song_name)
 
-    # yt-dlp options to extract best audio and convert to WAV
+    # yt-dlp options to extract the best audio and convert to WAV
     ydl_opts = {
         'retries': 10,  # retry on download errors
         'socket_timeout': 60,  # increase timeout from 20s
@@ -50,7 +50,7 @@ def download_song(youtube_url, dance_type, song_name):
 
 if __name__ == "__main__":
     project_root = Path(__file__).parent.parent.parent
-    songs_file = project_root / "train_data_set" / "youtube_songs.txt"
+    songs_file = project_root / "assets/train_data_set" / "youtube_songs.txt"
 
     with open(songs_file, 'r') as f:
         reader = csv.reader(f)

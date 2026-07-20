@@ -32,6 +32,16 @@ class MultiSpectrogramClassificationModel(nn.Module):
         for spec_type in spec_types:
             self.reduce_mlps[spec_type] = self._create_reduce_mlp(_feat_dim, self.config.reduced_dim)
 
+        # Late Fusion via Attention
+        self.fusion_attention = nn.TransformerEncoderLayer(
+            d_model=self.config.reduced_dim,
+            nhead=4,
+            dim_feedforward=self.config.reduced_dim * 2,
+            dropout=self.config.head_dropout_rate,
+            batch_first=True,
+            activation="gelu"
+        )
+
         # Create the classification head based on the number of branches
         fused_dim = self.config.reduced_dim * len(spec_types)
         self.classification_head = self._create_classification_head(fused_dim)
@@ -56,7 +66,13 @@ class MultiSpectrogramClassificationModel(nn.Module):
             features.append(reduced_features)
 
         # Fuse all branch outputs and pass them to the classification head
-        fused_features = torch.cat(features, dim=1)
+        stacked_features = torch.stack(features, dim=1)
+
+        # Adjust fusion with cross branch attention
+        attended_features = self.fusion_attention(stacked_features)
+        fused_features = attended_features.flatten(start_dim=1)
+
+        # Output the classification result
         return self.classification_head(fused_features)
 
     def _load_grayscale_mobile_net_backbone(self) -> nn.Module:

@@ -33,18 +33,35 @@ def get_true_label(filepath: Path) -> str:
     return None
 
 
-def plot_confusion_matrix(y_true, y_pred, output_path: str):
-    """Generates and saves an interactive confusion matrix heatmap as HTML."""
+def plot_confusion_matrix(y_true, y_pred, output_path: str, normalize: bool = False):
+    """Generates and saves an interactive confusion matrix heatmap as HTML.
+
+    Args:
+        y_true: True labels
+        y_pred: Predicted labels
+        output_path: Path to save the HTML file
+        normalize: If True, display percentages; if False, display absolute counts
+    """
     cm = confusion_matrix(y_true, y_pred, labels=range(len(DANCE_CLASSES)))
 
+    if normalize:
+        # Convert to percentages
+        cm_display = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100
+        text_format = '.2f'
+        title = 'Dance Style Confusion Matrix (Percentage)'
+    else:
+        cm_display = cm
+        text_format = 'd'
+        title = 'Dance Style Confusion Matrix (Absolute)'
+
     fig = px.imshow(
-        cm,
-        text_auto=True,
+        cm_display,
+        text_auto=text_format,
         color_continuous_scale='Blues',
         x=DANCE_CLASSES,
         y=DANCE_CLASSES,
-        labels=dict(x="Predicted Class", y="True Class", color="Count"),
-        title='Dance Style Confusion Matrix'
+        labels=dict(x="Predicted Class", y="True Class", color="Count" if not normalize else "Percentage (%)"),
+        title=title
     )
 
     fig.update_layout(
@@ -120,7 +137,7 @@ def main():
     model = load_model(config.inference_model_weights)
 
     print(f"Evaluating {len(wav_files)} files...")
-    y_true_indices, y_pred_indices, y_scores_list = [], [], []
+    processed_files, y_true_indices, y_pred_indices, y_scores_list = [], [], [], []
     for filepath in tqdm(wav_files):
         true_class = get_true_label(filepath)
 
@@ -147,10 +164,28 @@ def main():
         y_true_indices.append(DANCE_CLASSES.index(true_class))
         y_pred_indices.append(DANCE_CLASSES.index(predicted_class))
         y_scores_list.append(probs)
+        processed_files.append(filepath)  # <-- add this
 
     if not y_true_indices:
         print("No valid files were successfully processed. Exiting.")
         return
+
+    wrong_by_class = {cls: [] for cls in DANCE_CLASSES}
+    for filepath, true_idx, pred_idx in zip(processed_files, y_true_indices, y_pred_indices):
+        if true_idx != pred_idx:
+            true_cls = DANCE_CLASSES[true_idx]
+            pred_cls = DANCE_CLASSES[pred_idx]
+            wrong_by_class[true_cls].append((filepath.stem, pred_cls))
+
+    print("\n" + "=" * 40)
+    print("WRONG PREDICTIONS PER DANCE CLASS")
+    print("=" * 40)
+    for cls in DANCE_CLASSES:
+        wrongs = wrong_by_class[cls]
+        if wrongs:
+            print(f"\n[{cls}] — {len(wrongs)} wrong prediction(s):")
+            for song_name, predicted_as in wrongs:
+                print(f"  '{song_name}'  →  predicted as: {predicted_as}")
 
     # ---------- Calculate Metrics ----------
     print("\n" + "=" * 40)
@@ -181,9 +216,13 @@ def main():
     # ---------- Generate Plots ----------
     print(f"\nGenerating interactive plots in '{output_dir.absolute()}'...")
 
-    # Saving as .html files for interactivity
-    cm_path = output_dir / "confusion_matrix.html"
-    plot_confusion_matrix(y_true_indices, y_pred_indices, str(cm_path))
+    # Absolute confusion matrix
+    cm_abs_path = output_dir / "confusion_matrix_absolute.html"
+    plot_confusion_matrix(y_true_indices, y_pred_indices, str(cm_abs_path), normalize=False)
+
+    # Relative (percentage) confusion matrix
+    cm_rel_path = output_dir / "confusion_matrix_relative.html"
+    plot_confusion_matrix(y_true_indices, y_pred_indices, str(cm_rel_path), normalize=True)
 
     roc_path = output_dir / "roc_curves.html"
     plot_roc_curves(y_true_indices, y_scores_list, str(roc_path))

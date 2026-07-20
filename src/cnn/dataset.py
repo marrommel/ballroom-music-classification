@@ -1,11 +1,20 @@
 import glob
+import logging
 import os
+import sys
 
 import numpy as np
 import torch
 import torchaudio.transforms as audio_transforms
 from torch.utils.data import Dataset
 from config import Config
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s][%(name)s][%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger(__name__)
 
 
 class SpecDatasetEntry(Dataset):
@@ -46,13 +55,7 @@ class SpecDatasetEntry(Dataset):
         # Load spectrograms as grayscale images and preprocess them as tensors
         for spec_type in self.spec_types:
             spec_img = np.load(song_metadata[f"{spec_type}_image_path"])
-            spec_tensor = torch.tensor(spec_img, dtype=torch.float32).unsqueeze(0)
-
-            # Z-score normalization per spectrogram
-            if  self.config.z_score_normalization_enabled:
-                spec_tensor = (spec_tensor - spec_tensor.mean()) / (spec_tensor.std() + 1e-6)
-
-            tensors[spec_type] = spec_tensor
+            tensors[spec_type] = self.preprocess_spectrogram(spec_img)
 
         # apply selected augmentations for training data
         if self.train:
@@ -64,6 +67,18 @@ class SpecDatasetEntry(Dataset):
         # return the preprocessed spectrograms as tensors
         tensors['label'] = torch.tensor(song_metadata['label'], dtype=torch.long)
         return tensors
+
+    @staticmethod
+    def preprocess_spectrogram(spec_array) -> torch.Tensor:
+        """Convert a raw spectrogram numpy array to a normalized tensor.
+        Mirrors the preprocessing done in SpecDatasetEntry (train=False).
+        """
+        config = Config()
+
+        t = torch.tensor(spec_array, dtype=torch.float32).unsqueeze(0)
+        if config.z_score_normalization_enabled:
+            t = (t - t.mean()) / (t.std() + 1e-6)
+        return t
 
     @staticmethod
     def _time_shift_wrap_around(spec_img: torch.Tensor, enabled: bool) -> torch.Tensor:
@@ -89,8 +104,8 @@ class SpecDatasetEntry(Dataset):
     def _spec_augment(
             spec: torch.Tensor,
             enabled: bool,
-            freq_mask_param: int = 15,
-            time_mask_param: int = 60,
+            freq_mask_param: int = 24,
+            time_mask_param: int = 15,
     ) -> torch.Tensor:
         """Apply SpecAugment (Frequency and Time masking) to spectrogram.
 
@@ -139,7 +154,7 @@ class SpecDatasetLoader:
         Returns:
             Dict mapping parent_song names to lists of metadata dicts with paths and labels.
         """
-        self._print_data_statistics()
+        self._log_data_statistics()
 
         # Use the first spectrogram type as an anchor to iterate filenames
         first_spec_type = self.spec_types[0]
@@ -184,16 +199,33 @@ class SpecDatasetLoader:
 
         return song_groups
 
-    def _print_data_statistics(self) -> None:
-        """Print statistics about available dataset files."""
-        for spec_type in self.spec_types:
-            data_root = os.path.join(self.base_dir, spec_type)
-            if os.path.isdir(data_root):
-                subdirs = [d for d in os.listdir(data_root) if os.path.isdir(os.path.join(data_root, d))]
-                total_files = sum(
-                    len(glob.glob(os.path.join(data_root, sd, '*.npy'))) for sd in subdirs
-                )
-                print(f"[dataset]   {spec_type}/  →  {len(subdirs)} class folder(s), {total_files} .npy file(s)")
-            else:
-                print(f"[dataset]   WARNING: '{data_root}' does not exist")
+    def _log_data_statistics(self) -> None:
+        """Log statistics about available dataset files."""
+        # Amount of data is identical for all spec types
+        spec_type = self.spec_types[0]
+
+        data_root = os.path.join(self.base_dir, spec_type)
+        if os.path.isdir(data_root):
+            subdirs = [d for d in os.listdir(data_root) if os.path.isdir(os.path.join(data_root, d))]
+
+            # Build the entire table as a single string
+            table_lines = [f"Training Dataset Statistics:"]
+            table_lines.append(f"{'Dance Class':<30} {'# .npy files':<15}")
+            table_lines.append(f"{'-' * 30} {'-' * 15}")
+
+            # Count files per dance class
+            total_files = 0
+            for subdir in sorted(subdirs):
+                file_count = len(glob.glob(os.path.join(data_root, subdir, '*.npy')))
+                total_files += file_count
+                table_lines.append(f"{subdir:<30} {file_count:<15}")
+
+            # Add total row
+            table_lines.append(f"{'-' * 30} {'-' * 15}")
+            table_lines.append(f"{'TOTAL':<30} {total_files:<15}")
+
+            # Log the entire table as a single message
+            logger.info("\n" + "\n".join(table_lines))
+        else:
+            logger.warning(f"'{data_root}' does not exist")
 

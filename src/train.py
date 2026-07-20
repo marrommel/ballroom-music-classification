@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from cnn.dataset import SpecDatasetEntry, SpecDatasetLoader
 from cnn.model import MultiSpectrogramClassificationModel
 from config import Config
+from inference import DEVICE
 
 
 class TrainingHandler:
@@ -80,7 +81,7 @@ class TrainingHandler:
 		y = [chunk['label'] for chunk in all_chunks]
 		groups = [chunk['parent_song'] for chunk in all_chunks]
 
-		print(f"Total Unique Scenes: {len(song_spec_data)}")
+		print(f"Total Unique Songs: {len(song_spec_data)}")
 		return all_chunks, X, y, groups
 
 	def _build_loaders(self, all_chunks: list, train_idx: np.ndarray, val_idx: np.ndarray) -> tuple[DataLoader, DataLoader]:
@@ -113,7 +114,8 @@ class TrainingHandler:
 		"""Initialize model, optimizer, and scheduler for a new fold."""
 		# Reset model and loss function for the new fold
 		self.model = MultiSpectrogramClassificationModel().to(self.device)
-		self.criterion = nn.CrossEntropyLoss(label_smoothing=self.config.label_smoothing)
+		weights = torch.tensor([0.7, 1.2, 1.0, 1.2, 1.0, 1.3, 1.0, 1.0]).to(DEVICE)
+		self.criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=self.config.label_smoothing)
 
 		# Configure optimizer for backbone branches, feature reduction and classification head
 		self.optimizer = torch.optim.AdamW([

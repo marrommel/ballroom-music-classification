@@ -7,6 +7,7 @@ import librosa
 import numpy as np
 import torch
 
+from cnn.dataset import SpecDatasetEntry
 from cnn.model import MultiSpectrogramClassificationModel
 from config import Config
 from helpers.spectrograms import compute_spectrograms
@@ -82,7 +83,8 @@ def extract_chunks(audio_path: str, spec_types: list[str]) -> list[dict[str, np.
         return []
 
     inference_duration = min(INFERENCE_DURATION, total_duration)
-    offset = 0
+    offset = config.inference_offset
+    offset = min(offset, total_duration-INFERENCE_DURATION)
     y, _ = librosa.load(audio_path, sr=SAMPLE_RATE, offset=offset, duration=inference_duration)
 
     samples_per_chunk = int(CHUNK_DURATION * SAMPLE_RATE)
@@ -115,10 +117,9 @@ def predict(
     """
     all_probs = []
     for chunk in chunks:
-        # Build a dict of (1, 1, H, W) tensors matching train.py's format
         specs = {
-            s: torch.tensor(chunk[s]).unsqueeze(0).unsqueeze(0).to(DEVICE)
-            for s in  config.spec_types
+            s: SpecDatasetEntry.preprocess_spectrogram(chunk[s]).unsqueeze(0).to(DEVICE)
+            for s in config.spec_types
         }
         with torch.no_grad():
             logits = model(specs)

@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 
+from config import Config
 from helpers.spectrograms import save_spectrograms
 
 logging.basicConfig(
@@ -12,10 +13,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # configuration
-DATA_DIR = "train_data_set"
-OUTPUT_ROOT = "image_embeddings"
-CHUNK_DURATION = 15
-AUDIO_EXTENSIONS = (".mp3", ".wav")
+config = Config()
+DATA_DIR = "assets/train_data_set"
+OUTPUT_ROOT = "assets/image_embeddings"
+CHUNK_DURATION = config.chunk_duration
 
 
 def build_dataset() -> None:
@@ -32,7 +33,7 @@ def build_dataset() -> None:
     processed, failed = 0, 0
 
     for root, _dirs, files in os.walk(DATA_DIR):
-        audio_files = [f for f in files if f.lower().endswith(AUDIO_EXTENSIONS)]
+        audio_files = [f for f in files if f.lower().endswith(".wav")]
         if not audio_files:
             continue
 
