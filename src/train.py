@@ -114,7 +114,7 @@ class TrainingHandler:
 		"""Initialize model, optimizer, and scheduler for a new fold."""
 		# Reset model and loss function for the new fold
 		self.model = MultiSpectrogramClassificationModel().to(self.device)
-		weights = torch.tensor([0.7, 1.2, 1.0, 1.2, 1.0, 1.3, 1.0, 1.0]).to(DEVICE)
+		weights = torch.tensor([0.8, 1.1, 1.0, 1.1, 1.0, 1.2, 1.0, 1.0]).to(DEVICE)
 		self.criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=self.config.label_smoothing)
 
 		# Configure optimizer for backbone branches, feature reduction and classification head

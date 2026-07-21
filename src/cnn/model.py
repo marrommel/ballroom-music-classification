@@ -32,8 +32,12 @@ class MultiSpectrogramClassificationModel(nn.Module):
         for spec_type in spec_types:
             self.reduce_mlps[spec_type] = self._create_reduce_mlp(_feat_dim, self.config.reduced_dim)
 
+        # Add 3 modality embeddings to act as "name tags" for the spectrogram types
+        self.modality_embeddings = nn.Parameter(torch.randn(1, len(spec_types), self.config.reduced_dim))
+
         # Late Fusion via Attention
-        self.fusion_attention = nn.TransformerEncoderLayer(
+        #self.fusion_attention = nn.TransformerEncoderLayer(
+        attention_encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.config.reduced_dim,
             nhead=4,
             dim_feedforward=self.config.reduced_dim * 2,
@@ -41,6 +45,8 @@ class MultiSpectrogramClassificationModel(nn.Module):
             batch_first=True,
             activation="gelu"
         )
+
+        self.fusion_attention = nn.TransformerEncoder(attention_encoder_layer, num_layers=2)
 
         # Create the classification head based on the number of branches
         fused_dim = self.config.reduced_dim * len(spec_types)
@@ -57,16 +63,34 @@ class MultiSpectrogramClassificationModel(nn.Module):
         Args:
             spectrograms: Dictionary mapping spec_type to image tensor
         """
+        spec_types = list(self.branches.keys())
         features = []
 
         # iterate over all backbone branches
-        for spec_type in self.branches.keys():
+        for spec_type in spec_types:
             spatial_features = self.branches[spec_type](spectrograms[spec_type])
             reduced_features = self.reduce_mlps[spec_type](spatial_features)
             features.append(reduced_features)
 
-        # Fuse all branch outputs and pass them to the classification head
+        # Stack features after reduction and add
         stacked_features = torch.stack(features, dim=1)
+
+        modality_dropout_rate = self.config.modality_dropout_rate
+        if self.training and modality_dropout_rate > 0:
+            droppable_idx = [i for i, st in enumerate(spec_types) if st in ("mel", "cqt")]
+            idx_tensor = torch.tensor(droppable_idx, device=stacked_features.device)
+
+            branch_shape = stacked_features.shape[0]
+            drop_sample = torch.rand(branch_shape, device=stacked_features.device) < modality_dropout_rate
+            chosen_modality = idx_tensor[torch.randint(0, len(droppable_idx), (branch_shape,), device=stacked_features.device)]
+
+            # zero out the chosen modality's embedding for the samples selected to drop
+            mask = torch.zeros(branch_shape, len(spec_types), 1, device=stacked_features.device)
+            mask[drop_sample, chosen_modality[drop_sample]] = 1.0
+            stacked_features = stacked_features * (1 - mask)
+
+        # Add modalities after random dropout to prepare the input for the attention layer
+        stacked_features = stacked_features + self.modality_embeddings
 
         # Adjust fusion with cross branch attention
         attended_features = self.fusion_attention(stacked_features)

@@ -10,7 +10,7 @@ import torch
 from cnn.dataset import SpecDatasetEntry
 from cnn.model import MultiSpectrogramClassificationModel
 from config import Config
-from helpers.spectrograms import compute_spectrograms
+from helpers.spectrograms import compute_spectrograms, __min_max_normalize
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,19 +115,32 @@ def predict(
     Returns:
         Tuple of (predicted_class_name, {class_name: probability}).
     """
-    all_probs = []
-    for chunk in chunks:
-        specs = {
-            s: SpecDatasetEntry.preprocess_spectrogram(chunk[s]).unsqueeze(0).to(DEVICE)
-            for s in config.spec_types
-        }
-        with torch.no_grad():
-            logits = model(specs)
-            all_probs.append(torch.softmax(logits, dim=1).squeeze(0).cpu())
+    # Preprocess and batch all chunks together: {spec_type: (N, C, H, W)}
+    batched_specs = {
+        s: torch.stack([
+            SpecDatasetEntry.preprocess_spectrogram(chunk[s]) for chunk in chunks
+        ]).to(DEVICE)
+        for s in config.spec_types
+    }
 
-    avg_probs = torch.stack(all_probs).mean(dim=0).cpu().tolist()
-    predicted_idx = int(np.argmax(avg_probs))
-    prob_map = {cls: round(p, 4) for cls, p in zip(config.dance_classes, avg_probs)}
+    with torch.no_grad():
+        logits = model(batched_specs)  # (N, num_classes)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        probs = log_probs.exp()
+
+        # Entropy per chunk (lower = more confident)
+        entropy = -torch.sum(probs * log_probs, dim=-1)  # (N,)
+
+        # Invert entropy into weights: low entropy -> high weight
+        temperature = 1  # >1 sharpens weighting, <1 softens it
+        weights = torch.softmax(-entropy * temperature, dim=0)
+
+        # Confidence-weighted average of probabilities
+        final_probs = torch.sum(probs * weights.unsqueeze(1), dim=0)  # (num_classes,)
+
+    final_probs = final_probs.cpu().tolist()
+    predicted_idx = int(np.argmax(final_probs))
+    prob_map = {cls: round(p, 4) for cls, p in zip(config.dance_classes, final_probs)}
     return config.dance_classes[predicted_idx], prob_map
 
 

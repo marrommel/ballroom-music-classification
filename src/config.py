@@ -33,7 +33,8 @@ class Config:
 
     # Regularization
     clip_weights: bool = False
-    label_smoothing: float = 0.1 # 0.1
+    label_smoothing: float = 0.05 # 0.1
+    modality_dropout_rate: float = 0.0
     head_dropout_rate: float = 0.3 # 0.4
     backbone_drop_path_rate: float = 0.2
     reduced_dim = 256
@@ -55,4 +56,4 @@ class Config:
     # Inference
     inference_duration: int = 20
     inference_offset: int = 0
-    inference_model_weights = "best_model.pt"
+    inference_model_weights = "best_3_10_sec_attention_model.pt"

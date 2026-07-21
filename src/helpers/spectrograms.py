@@ -77,8 +77,7 @@ def save_spectrograms(
     temp_dir = os.path.join(output_root, "temp", category)
     os.makedirs(mel_dir, exist_ok=True)
     os.makedirs(cqt_dir, exist_ok=True)
-    os.makedirs(temp_dir
-                , exist_ok=True)
+    os.makedirs(temp_dir, exist_ok=True)
 
     logger.info(f"Processing: {audio_path}")
 
@@ -86,23 +85,30 @@ def save_spectrograms(
     sample_rate = 22050
     y, sample_rate = librosa.load(audio_path, sr=sample_rate)
 
-    # Calculate how many samples make up our chunk
-    samples_per_chunk = int(chunk_duration * sample_rate)
-    hop_samples = samples_per_chunk // 2  # 50% overlap sliding window
-    total_chunks = max(0, (len(y) - samples_per_chunk) // hop_samples + 1)
+    specs = compute_spectrograms(y, sample_rate, ["mel", "cqt", "temp"])
+    mel_spec, cqt_spec, temp_spec = specs["mel"], specs["cqt"], specs["temp"]
+
+    # Calculate chunk sie in spectrogram frames
+    frames_per_second = sample_rate / 512
+    frames_per_chunk = int(chunk_duration * frames_per_second)
+    hop_frames = frames_per_chunk // 2  # 50% overlap in frames
+
+    # Calculate the number of chunks from the time axis of one spectrogram
+    total_frames = mel_spec.shape[1]
+    total_chunks = max(0, (total_frames - frames_per_chunk) // hop_frames + 1)
+
 
     song_name = os.path.splitext(os.path.basename(audio_path))[0]
-
     vis_mel_path, vis_cqt_path, vis_temp_path = "", "", ""
 
     for i in range(total_chunks):
         # Slice the audio into a chunk with 50% hop
-        start_sample = i * hop_samples
-        end_sample = start_sample + samples_per_chunk
-        y_chunk = y[start_sample:end_sample]
+        start_frame = i * hop_frames
+        end_frame = start_frame + frames_per_chunk
 
-        specs = compute_spectrograms(y_chunk, sample_rate, ["mel", "cqt", "temp"])
-        mel_normalized, cqt_normalized, temp_normalized = specs["mel"], specs["cqt"], specs["temp"]
+        mel_chunk = mel_spec[:, start_frame:end_frame]
+        cqt_chunk = cqt_spec[:, start_frame:end_frame]
+        temp_chunk = temp_spec[:, start_frame:end_frame]
 
         # save spectrograms as numpy arrays to avoid loading PNG files
         mel_path = os.path.join(mel_dir, f"{song_name}_chunk{i:03d}_mel.npy")
@@ -117,9 +123,9 @@ def save_spectrograms(
             vis_temp_path = temp_path
 
         try:
-            np.save(mel_path, mel_normalized)
-            np.save(cqt_path, cqt_normalized)
-            np.save(temp_path, temp_normalized)
+            np.save(mel_path, mel_chunk)
+            np.save(cqt_path, cqt_chunk)
+            np.save(temp_path, temp_chunk)
         except Exception as e:
             logger.error(f"Failed to save spectrograms for chunk {i}: {e}")
             return "", ""
@@ -128,9 +134,10 @@ def save_spectrograms(
 
     # Print the shape of the last chunk so you know your CNN input dimensions
     if total_chunks > 0:
-        logger.info(f"CNN Input Shape (Mel): {mel_normalized.shape} -> {mel_path}")
-        logger.info(f"CNN Input Shape (CQT): {cqt_normalized.shape} -> {cqt_path}")
-        logger.info(f"CNN Input Shape (Tempo): {temp_normalized.shape} -> {temp_path}")
+        pass
+        #logger.info(f"CNN Input Shape (Mel): {mel_normalized.shape} -> {mel_path}")
+        #logger.info(f"CNN Input Shape (CQT): {cqt_normalized.shape} -> {cqt_path}")
+        #logger.info(f"CNN Input Shape (Tempo): {temp_normalized.shape} -> {temp_path}")
     else:
         logger.warning(f"Audio too short for a full {chunk_duration}s chunk: {audio_path}")
 
