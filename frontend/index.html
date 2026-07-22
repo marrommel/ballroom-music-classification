@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dance Classifier</title>
+  <!-- Add to manifest.json for PWA/installable on Android -->
+</head>
+<body>
+  <input type="file" id="audio" accept="audio/*" capture>
+  <button onclick="classify()">Classify</button>
+  <div id="result"></div>
+
+  <script>
+    const API = "https://YOUR_CLOUD_RUN_URL";
+    async function classify() {
+      const file = document.getElementById("audio").files[0];
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API}/classify`, { method: "POST", body: form });
+      const data = await res.json();
+      document.getElementById("result").innerText =
+        `${data.predicted_class}\n` +
+        Object.entries(data.probabilities)
+          .sort((a,b) => b[1]-a[1])
+          .map(([k,v]) => `${k}: ${(v*100).toFixed(1)}%`).join("\n");
+    }
+  </script>
+</body>
+</html>
