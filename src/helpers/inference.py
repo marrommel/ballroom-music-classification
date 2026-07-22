@@ -7,10 +7,10 @@ import librosa
 import numpy as np
 import torch
 
-from cnn.dataset import SpecDatasetEntry
-from cnn.model import MultiSpectrogramClassificationModel
-from config import Config
-from helpers.spectrograms import compute_spectrograms, __min_max_normalize
+from src.cnn.dataset import SpecDatasetEntry
+from src.cnn.model import MultiSpectrogramClassificationModel
+from src.config import Config
+from src.helpers.spectrograms import compute_spectrograms
 
 logging.basicConfig(
     level=logging.INFO,

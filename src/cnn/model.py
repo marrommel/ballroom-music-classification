@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from safetensors.torch import load_file
 
-from config import Config
+from src.config import Config
 
 
 class MultiSpectrogramClassificationModel(nn.Module):
@@ -105,14 +105,6 @@ class MultiSpectrogramClassificationModel(nn.Module):
         Returns:
             A MobileNetV4 model configured for 1-channel input with no classification head.
         """
-        # Load pretrained weights and drop the classification head
-        state_dict = load_file(self.config.pretrained_weights)
-        state_dict = {k: v for k, v in state_dict.items() if not k.startswith("classifier")}
-
-        # Average 3-channel (RGB) weights into 1-channel (grayscale)
-        if "conv_stem.weight" in state_dict:
-            state_dict["conv_stem.weight"] = state_dict["conv_stem.weight"].mean(dim=1, keepdim=True)
-
         # Load Mobile Net V4 small with its pretrained weights
         model = timm.create_model(
             self.config.model_name,
@@ -121,7 +113,6 @@ class MultiSpectrogramClassificationModel(nn.Module):
             num_classes=0,
             drop_path_rate=self.config.backbone_drop_path_rate,
         )
-        model.load_state_dict(state_dict, strict=False)
         return model
 
     @staticmethod

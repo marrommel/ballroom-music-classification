@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile, os, shutil
-from config import Config
+from src.config import Config
 from src.helpers.inference import load_model, extract_chunks, predict
 
 app = FastAPI()

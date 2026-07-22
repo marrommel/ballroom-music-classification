@@ -70,11 +70,4 @@ Thumbs.db
 # JetBrains / IntelliJ
 .idea/
 
-# Project-specific
-audio/
-data/
-visual_embeddings_backup/
 
-# Pretrained weights files
-*.safetensors
-*.pt

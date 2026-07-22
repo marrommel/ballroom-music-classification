@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torchaudio.transforms as audio_transforms
 from torch.utils.data import Dataset
-from config import Config
+from src.config import Config
 
 logging.basicConfig(
     level=logging.INFO,

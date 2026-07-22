@@ -11,5 +11,5 @@ COPY weights/ ./weights/
 # Install dependencies from lockfile (no venv, install to system)
 RUN uv sync --frozen --no-dev
 
-WORKDIR /app/src
-CMD ["uv", "run", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run uvicorn from the root directory, pointing to the app inside the src folder
+CMD ["uv", "run", "uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8080"]

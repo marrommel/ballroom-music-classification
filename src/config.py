@@ -50,10 +50,9 @@ class Config:
 
     # Model
     model_name: str = "mobilenetv4_conv_small.e2400_r224_in1k"
-    pretrained_weights: str = "./assets/mobilenetv4_conv_small_e2400_r224_in1k.safetensors"
     z_score_normalization_enabled = False
 
     # Inference
     inference_duration: int = 20
     inference_offset: int = 0
-    inference_model_weights = "best_3_10_sec_attention_model.pt"
+    inference_model_weights = "./weights/pretrained_brd_classification.pt"
