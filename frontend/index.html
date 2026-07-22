@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
   <title>Ballroom Dance Classifier</title>
-  <!-- Optional: Add manifest for PWA -->
   <link rel="manifest" href="manifest.json">
 
   <style>
@@ -74,7 +73,7 @@
       background-color: var(--danger);
       color: white;
       animation: pulse 1.5s infinite;
-      cursor: default; /* Make it look unclickable while recording */
+      cursor: default;
     }
     .btn-record:hover { background-color: var(--danger); }
 
@@ -89,7 +88,6 @@
       color: white;
     }
 
-    /* Pulse animation for recording state */
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
       70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
@@ -153,10 +151,7 @@
       border-bottom: none;
     }
 
-    /* Utility */
     .hidden { display: none !important; }
-
-    /* Icons (Inline SVG) */
     .icon { width: 20px; height: 20px; fill: currentColor; }
   </style>
 </head>
@@ -210,8 +205,8 @@
     let audioChunks = [];
     let activeStream;
 
-    // Configure this to match your backend's INFERENCE_DURATION / MIN_DURATION
-    const REQUIRED_RECORDING_SECONDS = 10;
+    // Timer logic
+    const REQUIRED_RECORDING_SECONDS = 20;
     let recordingTimer;
     let secondsLeft = REQUIRED_RECORDING_SECONDS;
 
@@ -225,8 +220,7 @@
     const detailsList = document.getElementById('details-list');
 
     async function toggleRecording() {
-      // Prevent user from manually stopping if it's currently recording
-      // We will let the timer stop it automatically to ensure perfect duration.
+      // Prevent manual stop, rely entirely on the 10-second timer
       if (!isRecording) {
         await startRecording();
       }
@@ -254,10 +248,14 @@
           sectionLoading.classList.remove('hidden');
 
           try {
-            // Replaced missing convertToWav logic with existing WebM Blob logic
-            // for immediate browser compatibility with your backend.
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            await uploadAndClassify(audioBlob);
+            // 1. Get raw browser recording (webm/ogg)
+            const rawBlob = new Blob(audioChunks);
+
+            // 2. Convert to true WAV file for the Python backend
+            const wavBlob = await convertToWav(rawBlob);
+
+            // 3. Upload the WAV file
+            await uploadAndClassify(wavBlob);
           } catch (err) {
             console.error("Audio processing error:", err);
             alert("Error processing the recorded audio.");
@@ -268,7 +266,6 @@
         mediaRecorder.start();
         isRecording = true;
 
-        // Update UI to show countdown
         recordBtn.classList.remove('btn-primary');
         recordBtn.classList.add('btn-record');
 
@@ -281,7 +278,6 @@
           if (secondsLeft > 0) {
             recordText.innerText = `Recording... ${secondsLeft}s`;
           } else {
-            // Auto-stop exactly when we reach the required duration
             stopRecording();
           }
         }, 1000);
@@ -297,17 +293,61 @@
         mediaRecorder.stop();
         isRecording = false;
 
-        // Reset Record Button visually for the next time
         recordBtn.classList.remove('btn-record');
         recordBtn.classList.add('btn-primary');
         recordText.innerText = "Start Recording";
       }
     }
 
-    async function uploadAndClassify(audioBlob) {
+    // --- Web Audio API WAV Converter ---
+    async function convertToWav(rawBlob) {
+      const arrayBuffer = await rawBlob.arrayBuffer();
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      // Convert to Mono 16-bit WAV file
+      const numOfChannels = 1;
+      const sampleRate = audioBuffer.sampleRate;
+      const channelData = audioBuffer.getChannelData(0); // Left channel (Mono)
+
+      const wavBuffer = new ArrayBuffer(44 + channelData.length * 2);
+      const view = new DataView(wavBuffer);
+
+      const writeString = (view, offset, string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+
+      // Write WAV Header
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + channelData.length * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, numOfChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true); // Byte rate
+      view.setUint16(32, 2, true); // Block align
+      view.setUint16(34, 16, true); // 16-bit
+      writeString(view, 36, 'data');
+      view.setUint32(40, channelData.length * 2, true);
+
+      // Write PCM Samples
+      let offset = 44;
+      for (let i = 0; i < channelData.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, channelData[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+
+      return new Blob([view], { type: 'audio/wav' });
+    }
+
+    async function uploadAndClassify(wavBlob) {
       try {
         const form = new FormData();
-        form.append("file", audioBlob, "recording.webm");
+        form.append("file", wavBlob, "recording.wav");
 
         const res = await fetch(`${API}/classify`, {
           method: "POST",
@@ -321,28 +361,23 @@
 
       } catch (error) {
         console.error("Classification error:", error);
-        alert("Oops! Something went wrong while classifying. Make sure the backend is running.");
+        alert("Backend error or CORS issue. Check backend logs to see if it crashed!");
         resetUI();
       }
     }
 
     function showResults(data) {
-      // Hide loading, show results
       sectionLoading.classList.add('hidden');
       sectionResult.classList.remove('hidden');
 
-      // 1. Set main bold text
       mainResult.innerText = data.predicted_class;
 
-      // 2. Populate details table (sorted by highest probability)
       detailsList.innerHTML = "";
-
       const sortedProbs = Object.entries(data.probabilities)
         .sort((a, b) => b[1] - a[1]);
 
       sortedProbs.forEach(([dance, probability]) => {
         const percent = (probability * 100).toFixed(1);
-
         const row = document.createElement('div');
         row.className = 'probability-row';
         row.innerHTML = `
@@ -354,12 +389,11 @@
     }
 
     function resetUI() {
-      // Hide all dynamic sections, show record section
       sectionResult.classList.add('hidden');
       sectionLoading.classList.add('hidden');
       sectionRecord.classList.remove('hidden');
 
-      // Safety reset of the button in case it errors during recording
+      // Safety resets
       recordBtn.classList.remove('btn-record');
       recordBtn.classList.add('btn-primary');
       recordText.innerText = "Start Recording";
