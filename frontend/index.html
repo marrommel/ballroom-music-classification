@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
   <title>Ballroom Dance Classifier</title>
+  <!-- Optional: Add manifest for PWA -->
   <link rel="manifest" href="manifest.json">
 
   <style>
@@ -73,7 +74,7 @@
       background-color: var(--danger);
       color: white;
       animation: pulse 1.5s infinite;
-      cursor: default;
+      cursor: default; /* Make it look unclickable while recording */
     }
     .btn-record:hover { background-color: var(--danger); }
 
@@ -88,6 +89,7 @@
       color: white;
     }
 
+    /* Pulse animation for recording state */
     @keyframes pulse {
       0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
       70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
@@ -151,7 +153,10 @@
       border-bottom: none;
     }
 
+    /* Utility */
     .hidden { display: none !important; }
+
+    /* Icons (Inline SVG) */
     .icon { width: 20px; height: 20px; fill: currentColor; }
   </style>
 </head>
@@ -220,7 +225,8 @@
     const detailsList = document.getElementById('details-list');
 
     async function toggleRecording() {
-      // Prevent manual stop, rely entirely on the 10-second timer
+      // Prevent user from manually stopping if it's currently recording
+      // We will let the timer stop it automatically to ensure perfect duration.
       if (!isRecording) {
         await startRecording();
       }
@@ -266,6 +272,7 @@
         mediaRecorder.start();
         isRecording = true;
 
+        // Update UI to show countdown
         recordBtn.classList.remove('btn-primary');
         recordBtn.classList.add('btn-record');
 
@@ -278,6 +285,7 @@
           if (secondsLeft > 0) {
             recordText.innerText = `Recording... ${secondsLeft}s`;
           } else {
+            // Auto-stop exactly when we reach the required duration
             stopRecording();
           }
         }, 1000);
@@ -293,6 +301,7 @@
         mediaRecorder.stop();
         isRecording = false;
 
+        // Reset Record Button visually for the next time
         recordBtn.classList.remove('btn-record');
         recordBtn.classList.add('btn-primary');
         recordText.innerText = "Start Recording";
@@ -361,23 +370,28 @@
 
       } catch (error) {
         console.error("Classification error:", error);
-        alert("Backend error or CORS issue. Check backend logs to see if it crashed!");
+        alert("Oops! Something went wrong while classifying. Make sure the backend is running.");
         resetUI();
       }
     }
 
     function showResults(data) {
+      // Hide loading, show results
       sectionLoading.classList.add('hidden');
       sectionResult.classList.remove('hidden');
 
+      // 1. Set main bold text
       mainResult.innerText = data.predicted_class;
 
+      // 2. Populate details table (sorted by highest probability)
       detailsList.innerHTML = "";
+
       const sortedProbs = Object.entries(data.probabilities)
         .sort((a, b) => b[1] - a[1]);
 
       sortedProbs.forEach(([dance, probability]) => {
         const percent = (probability * 100).toFixed(1);
+
         const row = document.createElement('div');
         row.className = 'probability-row';
         row.innerHTML = `
@@ -389,6 +403,7 @@
     }
 
     function resetUI() {
+      // Hide all dynamic sections, show record section
       sectionResult.classList.add('hidden');
       sectionLoading.classList.add('hidden');
       sectionRecord.classList.remove('hidden');
