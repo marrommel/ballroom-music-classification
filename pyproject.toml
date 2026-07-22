@@ -3,6 +3,7 @@ name = "ballroommusicclassification"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.139.2",
     "librosa>=0.11.0",
     "matplotlib>=3.11.0",
     "numpy>=2.4.6",
@@ -10,6 +11,7 @@ dependencies = [
     "timm>=1.0.27",
     "torch>=2.12.1",
     "torchaudio>=2.11.0",
+    "uvicorn>=0.51.0",
 ]
 
 [tool.uv.sources]
